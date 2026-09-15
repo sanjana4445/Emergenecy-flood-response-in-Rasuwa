@@ -54,6 +54,13 @@ st.markdown("""
         background: var(--paper); border: 1px solid var(--line); border-radius: 12px;
         padding: 16px;
     }
+    .output-card { min-height: 176px; margin-bottom: 16px; }
+    .output-card .metric-title { min-height: 34px; color: var(--teal); }
+    .output-card-row { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #edf1f0; padding: 7px 0; color: #64748b; font-size: 13px; }
+    .output-card-row strong { color: #0f172a; }
+    .output-status { font-size: 12px; font-weight: 700; margin-top: 5px; }
+    .output-met { color: #20965a; }
+    .output-pending { color: #d97706; }
     .metric-title {
         font-size: 13px;
         font-weight: 600;
@@ -132,8 +139,6 @@ def apply_chart_theme(figure):
 # ---------------------------------------------------------
 # DATA PROCESSING & INITIALIZATION
 # ---------------------------------------------------------
-PALIKAS = ["Gosaikunda", "Uttargaya", "Kalika", "Aamachhodingmo"]
-
 @st.cache_data
 def load_base_data(workbook_mtime):
     file_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
@@ -228,8 +233,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="filter-label">Dashboard scope: Excel output totals</div>', unsafe_allow_html=True)
-selected_palikas = ['District total']
-
 # Output filter remains available in the data editor workflow.
 outputs = list(st.session_state.data_matrix['CCC Output'].unique()) if 'data_matrix' in st.session_state else []
 selected_outputs = outputs
@@ -242,21 +245,25 @@ df_active = st.session_state.data_matrix[
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
 output_summary = summarize_outputs(df_active, ['Target', 'Progress'])
-achieved_count = int((output_summary['Progress'] >= output_summary['Target']).sum())
-progress_count = int(((output_summary['Progress'] > 0) & (output_summary['Progress'] < output_summary['Target'])).sum())
-not_started_count = int((output_summary['Progress'] <= 0).sum())
-output_count = len(output_summary)
-
-st.markdown(f"""
-<div class="summary-card">
-    <div><div class="summary-value">{output_count}</div><div class="summary-copy">Excel output targets being monitored</div></div>
-    <div class="summary-status">
-        <div><span class="status-dot status-done">✓</span>{achieved_count} achieved</div>
-        <div><span class="status-dot status-progress">⌁</span>{progress_count} in progress</div>
-        <div><span class="status-dot status-pending">ⓘ</span>{not_started_count} not started</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+st.markdown("#### Output-wise daily performance", unsafe_allow_html=True)
+st.caption("Each card is calculated from the Excel daily sheet. Met target means achieved progress is at least the output target.")
+output_cards = output_summary.reset_index()
+card_columns = st.columns(3, gap="medium")
+for card_index, output_row in output_cards.iterrows():
+    target = output_row['Target']
+    achieved = output_row['Progress']
+    progress_pct = achieved / target * 100 if target else 0
+    status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
+    with card_columns[card_index % 3]:
+        st.markdown(f"""
+        <div class="metric-card output-card">
+            <div class="metric-title">{output_row['CCC Output']}</div>
+            <div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>
+            <div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>
+            <div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>
+            <div class="output-status {'output-met' if status == 'Met target' else 'output-pending'}">{status}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
@@ -270,48 +277,9 @@ tab_exec, tab_palika, tab_output, tab_timelapse, tab_monitoring, tab_editor = st
 # =========================================================
 with tab_exec:
     st.subheader("High-Level Strategic Overview")
-    st.caption("Use the summary cards for scale, the charts for performance, and the priority view to identify where support is needed.")
+    st.caption("Use the output cards and charts to compare each Excel output target with achieved progress.")
     
-    tot_target = df_active['Target'].sum()
-    tot_progress = df_active['Progress'].sum()
-    gap = tot_target - tot_progress
-    
-    st.markdown('<div class="dashboard-section"><h4>At a glance</h4><p>Key response numbers for the selected municipalities and output areas.</p></div>', unsafe_allow_html=True)
-    m1, m2, m3, m4 = st.columns(4, gap="medium")
-    with m1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Total Targeted Reach</div>
-            <div class="metric-value">{tot_target:,}</div>
-            <div class="metric-sub">Across {len(selected_palikas)} Palikas</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with m2:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Cumulative Achieved</div>
-            <div class="metric-value">{tot_progress:,}</div>
-            <div class="metric-sub">Verified Progress</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with m3:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Outputs Meeting Target</div>
-            <div class="metric-value">{achieved_count} / {output_count}</div>
-            <div class="metric-sub">Output-level daily status</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with m4:
-        st.markdown(f"""
-        <div class="metric-card">
-            <div class="metric-title">Unmet Gap (Target - Actual)</div>
-            <div class="metric-value">{gap:,}</div>
-            <div class="metric-sub" style="color:#ef4444;">Needs Coverage</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    st.markdown('<div class="dashboard-section"><h4>Performance by indicator</h4><p>Compare planned reach with verified progress for each WASH indicator.</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="dashboard-section"><h4>Performance by output</h4><p>Compare each Excel output target with its achieved progress.</p></div>', unsafe_allow_html=True)
     
     c_left, c_right = st.columns([6, 4])
     
@@ -322,7 +290,7 @@ with tab_exec:
         ind_group = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
         
         fig_summary.add_trace(go.Bar(
-            y=ind_group['Indicator'],
+            y=ind_group['CCC Output'],
             x=ind_group['Target'],
             name='Target',
             orientation='h',
@@ -333,7 +301,7 @@ with tab_exec:
             cliponaxis=False
         ))
         fig_summary.add_trace(go.Bar(
-            y=ind_group['Indicator'],
+            y=ind_group['CCC Output'],
             x=ind_group['Progress'],
             name='Achieved Progress',
             orientation='h',
@@ -412,57 +380,6 @@ with tab_exec:
         legend=dict(orientation='h', y=1.08, x=0)
     )
     st.plotly_chart(apply_chart_theme(fig_overview_output), use_container_width=True)
-
-    st.markdown('<div class="dashboard-section"><h4>Coverage by municipality</h4><p>Find uneven coverage quickly and focus follow-up on the largest remaining gaps.</p></div>', unsafe_allow_html=True)
-    palika_summary = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-    palika_summary['Completion %'] = (
-        palika_summary['Progress'] / palika_summary['Target'].replace(0, 1) * 100
-    ).round(1)
-    palika_summary['Gap'] = palika_summary['Target'] - palika_summary['Progress']
-    palika_summary['Target status'] = palika_summary.apply(
-        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
-    )
-
-    coverage_left, coverage_right = st.columns([6, 4])
-    with coverage_left:
-        fig_coverage = px.bar(
-            palika_summary.sort_values('Completion %'),
-            x='CCC Output',
-            y='Completion %',
-            text='Completion %',
-            color='Completion %',
-            color_continuous_scale=['#f97316', '#facc15', '#16a34a'],
-            range_color=[0, 100],
-            title="Progress percentage by output",
-            height=340
-        )
-        fig_coverage.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-        fig_coverage.update_layout(
-            yaxis=dict(range=[0, 110], ticksuffix='%'),
-            coloraxis_showscale=False,
-            margin=dict(l=10, r=10, t=55, b=20)
-        )
-        st.plotly_chart(apply_chart_theme(fig_coverage), use_container_width=True)
-
-    with coverage_right:
-        priority = palika_summary.sort_values('Gap', ascending=False).head(6).copy()
-        priority['Gap'] = priority['Gap'].map('{:,.0f}'.format)
-        priority['Completion %'] = priority['Completion %'].map('{:.1f}%'.format)
-        st.markdown("**Priority follow-up list**")
-        st.markdown('<div class="priority-table">Sorted by unmet target, so the biggest coverage gaps are visible first.</div>', unsafe_allow_html=True)
-        st.dataframe(
-            priority[['CCC Output', 'Target', 'Progress', 'Gap', 'Completion %', 'Target status']],
-            column_config={
-                'CCC Output': 'Output',
-                'Target': 'Target',
-                'Progress': 'Achieved',
-                'Gap': 'Unmet target',
-                'Completion %': 'Progress %',
-                'Target status': 'Target status'
-            },
-            use_container_width=True,
-            hide_index=True
-        )
 
 # =========================================================
 # TAB 2: PALIKA-WISE PROGRESS
