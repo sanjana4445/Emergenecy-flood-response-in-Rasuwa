@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime
+from streamlit_autorefresh import st_autorefresh
 
 # Set page configuration with a modern, wide layout
 st.set_page_config(
@@ -190,6 +191,7 @@ def load_base_data(workbook_mtime):
 
 workbook_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
 workbook_mtime = workbook_path.stat().st_mtime_ns
+st_autorefresh(interval=30_000, key="excel_workbook_refresh")
 raw_df = load_base_data(workbook_mtime)
 
 OUTPUT_ORDER = [
@@ -240,13 +242,13 @@ if data_needs_refresh and not raw_df.empty:
     st.session_state.data_matrix_source_mtime = workbook_mtime
 
 # Reference-style header and inline municipality controls.
-st.markdown("""
+st.markdown(f"""
 <div class="hero">
   <div class="hero-top">
     <div class="hero-brand"><div class="hero-mark">💧</div><div><h1>Rasuwa Flood Response</h1><p>WASH monitoring dashboard</p></div></div>
     <div class="export-label">⇩ &nbsp; Export CSV</div>
   </div>
-    <div class="hero-meta"><span class="hero-pill">⌖ &nbsp;Rasuwa District, Bagmati Province</span><span class="hero-pill">Agency: UNICEF</span><span class="hero-pill">◷ &nbsp;Last update: {datetime.fromtimestamp(workbook_mtime / 1_000_000_000).strftime('%d %b %Y, %I:%M %p')}</span></div>
+    <div class="hero-meta"><span class="hero-pill">⌖ &nbsp;Rasuwa District, Bagmati Province</span><span class="hero-pill">Agency: UNICEF</span><span class="hero-pill">◷ &nbsp;Last update: {datetime.fromtimestamp(workbook_mtime / 1_000_000_000).strftime('%d %B %Y, %I:%M %p')}</span></div>
 </div>
 """, unsafe_allow_html=True)
 
