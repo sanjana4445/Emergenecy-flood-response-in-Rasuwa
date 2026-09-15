@@ -32,12 +32,12 @@ st.markdown("""
     .hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
     .hero-brand { display: flex; align-items: center; gap: 15px; }
     .hero-mark { width: 50px; height: 50px; border-radius: 15px; background: #3a8189; display: grid; place-items: center; font-size: 28px; }
-    .hero h1 { margin: 0; color: white; font-size: 27px; line-height: 1.1; letter-spacing: 0; }
-    .hero p { margin: 6px 0 0; color: #d8e8e9; font-size: 16px; }
+    .hero h1 { margin: 0; color: white; font-size: 30px; line-height: 1.1; letter-spacing: 0; }
+    .hero p { margin: 6px 0 0; color: #d8e8e9; font-size: 17px; }
     .export-label { border: 1px solid rgba(255,255,255,.45); border-radius: 11px; padding: 11px 17px; font-weight: 700; font-size: 14px; white-space: nowrap; }
     .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
     .hero-pill { background: rgba(255,255,255,.14); border-radius: 999px; padding: 9px 14px; color: #f3fbfb; font-size: 14px; }
-    .filter-label { color: var(--muted); font-size: 14px; margin: 0 0 9px; }
+    .filter-label { color: var(--muted); font-size: 15px; margin: 0 0 9px; }
     .summary-card { display: flex; justify-content: space-between; align-items: center; gap: 24px; background: var(--paper); border: 1px solid var(--line); border-radius: 20px; padding: 25px 28px; margin: 8px 0 24px; }
     .summary-value { color: var(--teal); font-size: 54px; font-weight: 800; line-height: 1; }
     .summary-copy { color: #687673; font-size: 16px; margin-top: 8px; }
@@ -47,7 +47,7 @@ st.markdown("""
     .stButton > button { border: 1px solid var(--line); border-radius: 999px; background: white; color: #485653; font-weight: 600; min-height: 40px; padding: 0 17px; }
     .stButton > button:hover { border-color: var(--teal); color: var(--teal); }
     .stTabs [data-baseweb="tab-list"] { gap: 36px; background: transparent; border-bottom: 1px solid var(--line); }
-    .stTabs [data-baseweb="tab"], .stTabs [role="tab"], .stTabs [role="tab"] button { color: #667572 !important; font-size: 16px; font-weight: 700; padding: 0 1px 14px; }
+    .stTabs [data-baseweb="tab"], .stTabs [role="tab"], .stTabs [role="tab"] button { color: #667572 !important; font-size: 17px; font-weight: 700; padding: 0 1px 14px; }
     .stTabs [role="tab"] p, .stTabs [role="tab"] span, .stTabs [role="tab"] div { color: inherit !important; }
     .stTabs [aria-selected="true"], .stTabs [aria-selected="true"] p, .stTabs [aria-selected="true"] span { color: var(--ink) !important; border-bottom: 2px solid var(--teal); }
     .metric-card {
@@ -55,27 +55,27 @@ st.markdown("""
         padding: 16px;
     }
     .output-card { min-height: 176px; margin-bottom: 16px; }
-    .output-card .metric-title { min-height: 34px; color: var(--teal); }
-    .output-card-row { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #edf1f0; padding: 7px 0; color: #64748b; font-size: 13px; }
-    .output-card-row strong { color: #0f172a; }
-    .output-status { font-size: 12px; font-weight: 700; margin-top: 5px; }
+    .output-card .metric-title { min-height: 38px; color: var(--teal); font-size: 15px; font-weight: 800; }
+    .output-card-row { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #edf1f0; padding: 8px 0; color: #52635f; font-size: 15px; }
+    .output-card-row strong { color: #0f172a; font-size: 18px; font-weight: 800; }
+    .output-status { font-size: 14px; font-weight: 800; margin-top: 6px; }
     .output-met { color: #20965a; }
     .output-pending { color: #d97706; }
     .metric-title {
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 600;
         color: #64748b;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
     .metric-value {
-        font-size: 26px;
+        font-size: 30px;
         font-weight: 700;
         color: #0f172a;
         margin-top: 4px;
     }
     .metric-sub {
-        font-size: 12px;
+        font-size: 13px;
         color: #10b981;
         font-weight: 600;
         margin-top: 2px;
@@ -89,14 +89,16 @@ st.markdown("""
     }
     .dashboard-section h4 {
         color: #0f172a;
-        font-size: 16px;
+        font-size: 18px;
         margin: 0 0 2px 0;
     }
     .dashboard-section p {
         color: #64748b;
-        font-size: 13px;
+        font-size: 14px;
         margin: 0 0 10px 0;
     }
+    [data-testid="stCaptionContainer"] p { font-size: 15px; color: #52635f; }
+    [data-testid="stDataFrame"] { font-size: 15px; }
     .priority-table {
         background: #fff7ed;
         border-left: 4px solid #f97316;
@@ -201,6 +203,22 @@ OUTPUT_ORDER = [
 def summarize_outputs(frame, value_columns):
     return frame.groupby('CCC Output')[value_columns].sum().reindex(OUTPUT_ORDER, fill_value=0)
 
+def output_interpretation(summary, achieved_column='Progress', target_column='Target', period_label='daily'):
+    measured = summary[summary[target_column] > 0].copy()
+    if measured.empty:
+        return 'No output targets are recorded in the workbook.'
+    measured['Progress %'] = (
+        measured[achieved_column] / measured[target_column] * 100
+    )
+    met_count = int((measured[achieved_column] >= measured[target_column]).sum())
+    priority = measured.sort_values('Progress %').iloc[0]
+    priority_name = priority.name
+    priority_pct = priority['Progress %']
+    return (
+        f"{met_count} of {len(measured)} outputs meet the {period_label} target. "
+        f"{priority_name} has the lowest {period_label} progress at {priority_pct:.1f}% and needs the closest review."
+    )
+
 # Initialize the data once; future changes come only from the Data editor.
 DATA_MATRIX_VERSION = 7
 data_needs_refresh = (
@@ -281,210 +299,134 @@ with tab_exec:
     
     st.markdown('<div class="dashboard-section"><h4>Performance by output</h4><p>Compare each Excel output target with its achieved progress.</p></div>', unsafe_allow_html=True)
     
-    c_left, c_right = st.columns([6, 4])
-    
-    with c_left:
-        st.markdown("**Target vs achieved progress**")
-        fig_summary = go.Figure()
-        
-        ind_group = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-        
-        fig_summary.add_trace(go.Bar(
-            y=ind_group['CCC Output'],
-            x=ind_group['Target'],
-            name='Target',
-            orientation='h',
-            marker_color='#e4a11b',
-            text=ind_group['Target'],
-            texttemplate='%{text:,.0f}',
-            textposition='outside',
-            cliponaxis=False
-        ))
-        fig_summary.add_trace(go.Bar(
-            y=ind_group['CCC Output'],
-            x=ind_group['Progress'],
-            name='Achieved Progress',
-            orientation='h',
-            marker_color='#0f626b',
-            text=ind_group['Progress'],
-            texttemplate='%{text:,.0f}',
-            textposition='outside',
-            cliponaxis=False
-        ))
-        fig_summary.update_layout(
-            template='plotly_white',
-            paper_bgcolor='white',
-            plot_bgcolor='white',
-            font=dict(color='#243331'),
-            barmode='group',
-            height=420,
-            margin=dict(l=10, r=55, t=35, b=20),
-            xaxis_title='Target / people or events reached',
-            yaxis_title='Output',
-            legend=dict(orientation="h", y=1.1, x=0)
-        )
-        st.plotly_chart(apply_chart_theme(fig_summary), use_container_width=True)
+    st.markdown("**Target vs achieved progress**")
+    fig_summary = go.Figure()
 
-    with c_right:
-        st.markdown("**Output target status**")
-        output_status = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-        output_status['Progress %'] = (
-            output_status['Progress'] / output_status['Target'].replace(0, 1) * 100
-        ).round(1)
-        output_status['Target status'] = output_status.apply(
-            lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
-        )
-        st.dataframe(
-            output_status[['CCC Output', 'Target', 'Progress', 'Progress %', 'Target status']],
-            column_config={
-                'CCC Output': 'Output',
-                'Target': st.column_config.NumberColumn('Target', format='%d'),
-                'Progress': st.column_config.NumberColumn('Achieved', format='%d'),
-                'Progress %': st.column_config.NumberColumn('Progress %', format='%.1f%%')
-            },
-            use_container_width=True,
-            hide_index=True,
-            height=380
-        )
+    ind_group = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
 
-    st.markdown('<div class="dashboard-section"><h4>Target and progress by output area</h4><p>A simple output-level view of planned reach versus achieved progress.</p></div>', unsafe_allow_html=True)
-    overview_output = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-    overview_output_long = overview_output.melt(
-        id_vars='CCC Output',
-        value_vars=['Target', 'Progress'],
-        var_name='Measure',
-        value_name='Value'
-    )
-    overview_output_long['Measure'] = overview_output_long['Measure'].replace({'Progress': 'Achieved'})
-    fig_overview_output = px.bar(
-        overview_output_long,
-        x='Value',
-        y='CCC Output',
-        color='Measure',
+    fig_summary.add_trace(go.Bar(
+        y=ind_group['CCC Output'],
+        x=ind_group['Target'],
+        name='Target',
         orientation='h',
-        barmode='group',
-        text='Value',
-        height=max(360, min(620, 55 * len(overview_output) + 120)),
-        color_discrete_map={'Target': '#e4a11b', 'Achieved': '#0f626b'}
-    )
-    fig_overview_output.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
-    fig_overview_output.update_layout(
+        marker_color='#e4a11b',
+        text=ind_group['Target'],
+        texttemplate='%{text:,.0f}',
+        textposition='outside',
+        cliponaxis=False
+    ))
+    fig_summary.add_trace(go.Bar(
+        y=ind_group['CCC Output'],
+        x=ind_group['Progress'],
+        name='Achieved Progress',
+        orientation='h',
+        marker_color='#0f626b',
+        text=ind_group['Progress'],
+        texttemplate='%{text:,.0f}',
+        textposition='outside',
+        cliponaxis=False
+    ))
+    fig_summary.update_layout(
         template='plotly_white',
         paper_bgcolor='white',
         plot_bgcolor='white',
         font=dict(color='#243331'),
-        margin=dict(l=10, r=55, t=20, b=20),
+        barmode='group',
+        height=420,
+        margin=dict(l=10, r=55, t=35, b=20),
         xaxis_title='Target / people or events reached',
-        yaxis_title='Output area',
-        yaxis={'categoryorder': 'array', 'categoryarray': overview_output['CCC Output'].tolist()},
-        legend=dict(orientation='h', y=1.08, x=0)
+        yaxis_title='Output',
+        legend=dict(orientation="h", y=1.1, x=0)
     )
-    st.plotly_chart(apply_chart_theme(fig_overview_output), use_container_width=True)
+    st.plotly_chart(apply_chart_theme(fig_summary), width="stretch")
+
+    st.info(output_interpretation(ind_group.set_index('CCC Output')))
 
 # =========================================================
-# TAB 2: PALIKA-WISE PROGRESS
+# TAB 2: ACTIVITY DETAILS
 # =========================================================
 with tab_palika:
-    st.subheader("Output-Level Target Breakdown")
-    st.caption("The workbook contains district-level records, so all totals are grouped by the six Excel outputs.")
-    
-    palika_summary = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-    palika_summary['Completion %'] = (palika_summary['Progress'] / palika_summary['Target'] * 100).round(1)
-    
-    col_p1, col_p2 = st.columns([6, 4])
-    
-    with col_p1:
-        fig_palika = px.bar(
-            palika_summary,
-            x='CCC Output',
-            y=['Target', 'Progress'],
-            barmode='group',
-            title="Target vs Achieved by Output",
-            color_discrete_map={'Target': '#cbd5e1', 'Progress': '#0d9488'},
-            height=400
-        )
-        st.plotly_chart(apply_chart_theme(fig_palika), use_container_width=True)
-        
-    with col_p2:
-        fig_pie = px.pie(
-            palika_summary,
-            names='CCC Output',
-            values='Progress',
-            title="Share of Total Response Reached",
-            hole=0.4,
-            color_discrete_sequence=px.colors.qualitative.Set2
-        )
-        st.plotly_chart(apply_chart_theme(fig_pie), use_container_width=True)
+    st.subheader("Activity Details")
+    st.caption("Activity descriptions and progress are loaded directly from the Excel workbook.")
 
-    st.markdown("#### Palika Monitoring Matrix")
+    activity_output = st.selectbox(
+        "Filter by output",
+        ["All outputs"] + OUTPUT_ORDER,
+        key="activity_output_filter"
+    )
+    activity_details = st.session_state.data_matrix.copy()
+    if activity_output != "All outputs":
+        activity_details = activity_details[activity_details['CCC Output'] == activity_output]
+
+    activity_details['Daily progress %'] = (
+        activity_details['Progress'] / activity_details['Target'].replace(0, 1) * 100
+    ).round(1)
+    activity_details['Daily status'] = activity_details.apply(
+        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else (
+            'No target recorded' if row['Target'] == 0 else 'Not met'
+        ), axis=1
+    )
+    activity_table = activity_details.rename(columns={
+        'CCC Output': 'Output',
+        'Result Statement': 'Result statement',
+        'Indicator': 'Indicator',
+        'Activity': 'Activity detail',
+        'Unit': 'Unit',
+        'Target': 'Daily target',
+        'Progress': 'Daily achieved',
+        'Weekly Target': 'Weekly target',
+        'Weekly Progress': 'Weekly achieved'
+    })
     st.dataframe(
-        palika_summary,
+        activity_table[[
+            'Output', 'Result statement', 'Indicator', 'Activity detail', 'Unit',
+            'Daily target', 'Daily achieved', 'Daily progress %', 'Daily status',
+            'Weekly target', 'Weekly achieved'
+        ]],
         column_config={
-            "Completion %": st.column_config.ProgressColumn(
-                "Completion Rate",
-                format="%.1f%%",
-                min_value=0,
-                max_value=100
-            ),
-            "Target": st.column_config.NumberColumn("Target", format="%d"),
-            "Progress": st.column_config.NumberColumn("Progress", format="%d")
+            'Activity detail': st.column_config.TextColumn('Activity detail', width='large'),
+            'Result statement': st.column_config.TextColumn('Result statement', width='large'),
+            'Indicator': st.column_config.TextColumn('Indicator', width='large'),
+            'Daily target': st.column_config.NumberColumn('Daily target', format='%.0f'),
+            'Daily achieved': st.column_config.NumberColumn('Daily achieved', format='%.0f'),
+            'Daily progress %': st.column_config.NumberColumn('Daily progress %', format='%.1f%%'),
+            'Weekly target': st.column_config.NumberColumn('Weekly target', format='%.0f'),
+            'Weekly achieved': st.column_config.NumberColumn('Weekly achieved', format='%.0f')
         },
-        use_container_width=True,
-        hide_index=True
+        width="stretch",
+        hide_index=True,
+        height=560
     )
 
 # =========================================================
 # TAB 3: OUTPUT-WISE COVERAGE
 # =========================================================
 with tab_output:
-    st.subheader("CCC Output-Wise Detailed Analysis")
+    st.subheader("Output Performance Table")
+    st.caption("One concise record per output from the Excel daily sheet.")
 
     output_totals = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
-    output_chart_data = output_totals.melt(
-        id_vars='CCC Output',
-        value_vars=['Target', 'Progress'],
-        var_name='Measure',
-        value_name='Value'
-    )
-    output_chart_data['Measure'] = output_chart_data['Measure'].replace({
-        'Target': 'Target',
-        'Progress': 'Achieved'
-    })
-
-    fig_output = px.bar(
-        output_chart_data,
-        x='Value',
-        y='CCC Output',
-        color='Measure',
-        orientation='h',
-        barmode='group',
-        text='Value',
-        title="Target and achieved progress by output area",
-        height=max(360, min(620, 55 * len(output_totals) + 120)),
-        color_discrete_map={'Target': '#f0a202', 'Achieved': '#1594a2'}
-    )
-    fig_output.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
-    fig_output.update_layout(
-        template='plotly_white',
-        paper_bgcolor='white',
-        plot_bgcolor='white',
-        font=dict(color='#243331'),
-        margin=dict(l=10, r=35, t=55, b=20),
-        xaxis_title='Target / people or events reached',
-        yaxis_title='Output area',
-        yaxis={'categoryorder': 'array', 'categoryarray': output_totals['CCC Output'].tolist()},
-        legend=dict(orientation='h', y=1.08, x=0)
-    )
-    st.plotly_chart(apply_chart_theme(fig_output), use_container_width=True)
-
-    # Detailed Data Table by Output
-    st.markdown("#### Output Performance Breakdown")
     out_table = output_totals.copy()
     out_table['Achievement %'] = (out_table['Progress'] / out_table['Target'] * 100).round(1)
     out_table['Target status'] = out_table.apply(
         lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
     )
-    st.dataframe(out_table, use_container_width=True, hide_index=True)
+    out_table = out_table.rename(columns={
+        'CCC Output': 'Output',
+        'Target': 'Target',
+        'Progress': 'Achieved'
+    })
+    st.dataframe(
+        out_table[['Output', 'Target', 'Achieved', 'Achievement %', 'Target status']],
+        column_config={
+            'Target': st.column_config.NumberColumn('Target', format='%.0f'),
+            'Achieved': st.column_config.NumberColumn('Achieved', format='%.0f'),
+            'Achievement %': st.column_config.NumberColumn('Progress %', format='%.1f%%')
+        },
+        width="stretch",
+        hide_index=True
+    )
+    st.info(output_interpretation(output_totals.set_index('CCC Output')))
 
 # =========================================================
 # TAB 4: TIME-LAPSE & TRENDS
@@ -522,7 +464,13 @@ with tab_timelapse:
         }, height=max(360, min(620, 55 * len(period_summary) + 120))
     )
     fig_time.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
-    st.plotly_chart(apply_chart_theme(fig_time), use_container_width=True)
+    st.plotly_chart(apply_chart_theme(fig_time), width="stretch")
+    st.info(output_interpretation(
+        period_summary.set_index('CCC Output'),
+        achieved_column='Progress',
+        target_column='Target',
+        period_label='daily'
+    ))
 
     st.markdown("#### Target met by output")
     st.caption("A target is met when achieved progress is greater than or equal to the corresponding Excel target.")
@@ -534,7 +482,7 @@ with tab_timelapse:
     st.dataframe(
         display_period[['Output', 'Daily target', 'Daily achieved', 'Daily achievement %', 'Daily Target Met',
                         'Weekly target', 'Weekly achieved', 'Weekly achievement %', 'Weekly Target Met']],
-        use_container_width=True, hide_index=True
+        width="stretch", hide_index=True
     )
 
 # =========================================================
@@ -544,50 +492,29 @@ with tab_monitoring:
     st.subheader("Progress Monitoring Center")
     st.caption("Use the output heatmap to compare daily and weekly progress, and the alerts to prioritize follow-up.")
 
-    monitor_left, monitor_right = st.columns([6, 4])
-    with monitor_left:
-        st.markdown("#### Daily and weekly progress by output")
-        tracking = summarize_outputs(
-            df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
-        )
-        heatmap_pct = pd.DataFrame(index=tracking.index)
-        heatmap_pct['Daily progress %'] = (
-            tracking['Progress'] / tracking['Target'].replace(0, 1) * 100
-        ).round(1)
-        heatmap_pct['Weekly progress %'] = (
-            tracking['Weekly Progress'] / tracking['Weekly Target'].replace(0, 1) * 100
-        ).round(1)
-        fig_heatmap = px.imshow(
-            heatmap_pct,
-            text_auto='.1f',
-            aspect='auto',
-            color_continuous_scale=['#fee2e2', '#fef3c7', '#bbf7d0', '#15803d'],
-            range_color=[0, 100,
-            ],
-            labels={'x': 'Period', 'y': 'Output', 'color': 'Progress %'},
-            height=max(420, min(760, 42 * len(heatmap_pct) + 140))
-        )
-        fig_heatmap.update_traces(texttemplate='%{z:.1f}%', textfont={'color': '#243331'})
-        st.plotly_chart(apply_chart_theme(fig_heatmap), use_container_width=True)
-
-    with monitor_right:
-        st.markdown("#### Recorded daily and weekly data")
-        trend_data = tracking.reset_index().melt(
-            id_vars='CCC Output',
-            value_vars=['Progress', 'Weekly Progress'],
-            var_name='Period', value_name='Achieved'
-        )
-        trend_data['Period'] = trend_data['Period'].replace({
-            'Progress': 'Daily', 'Weekly Progress': 'Weekly'
-        })
-        fig_trend = px.bar(
-            trend_data, x='CCC Output', y='Achieved', color='Period', barmode='group',
-            text='Achieved', title='Recorded achieved values by output', height=320,
-            color_discrete_map={'Daily': '#0f626b', 'Weekly': '#58aeb5'}
-        )
-        fig_trend.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
-        st.plotly_chart(apply_chart_theme(fig_trend), use_container_width=True)
-        st.caption("Daily and weekly achieved values come directly from the Excel sheets.")
+    st.markdown("#### Daily and weekly progress by output")
+    tracking = summarize_outputs(
+        df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
+    )
+    heatmap_pct = pd.DataFrame(index=tracking.index)
+    heatmap_pct['Daily progress %'] = (
+        tracking['Progress'] / tracking['Target'].replace(0, 1) * 100
+    ).round(1)
+    heatmap_pct['Weekly progress %'] = (
+        tracking['Weekly Progress'] / tracking['Weekly Target'].replace(0, 1) * 100
+    ).round(1)
+    fig_heatmap = px.imshow(
+        heatmap_pct,
+        text_auto='.1f',
+        aspect='auto',
+        color_continuous_scale=['#fee2e2', '#fef3c7', '#bbf7d0', '#15803d'],
+        range_color=[0, 100],
+        labels={'x': 'Reporting period', 'y': 'Output', 'color': 'Progress %'},
+        height=max(420, min(760, 42 * len(heatmap_pct) + 140))
+    )
+    fig_heatmap.update_traces(texttemplate='%{z:.1f}%', textfont={'color': '#243331'})
+    st.plotly_chart(apply_chart_theme(fig_heatmap), width="stretch")
+    st.info("The heatmap compares the recorded daily and weekly progress percentages for each output. Empty weekly targets are shown as 0% until Excel is populated.")
 
     st.markdown("#### Follow-up alerts")
     alert_table = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
@@ -615,7 +542,7 @@ with tab_monitoring:
                 'Remaining': st.column_config.NumberColumn('Remaining', format='%d'),
                 'Completion %': st.column_config.NumberColumn('Completion', format='%.1f%%')
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
 
@@ -629,7 +556,7 @@ with tab_editor:
     edited_df = st.data_editor(
         st.session_state.data_matrix[['SN', 'CCC Output', 'Result Statement', 'Indicator', 'Activity', 'Unit', 'Target', 'Progress', 'Weekly Target', 'Weekly Progress']],
         num_rows="dynamic",
-        use_container_width=True,
+        width="stretch",
         key="matrix_editor",
         disabled=['SN', 'CCC Output', 'Result Statement', 'Indicator', 'Unit']
     )
