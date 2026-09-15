@@ -4,7 +4,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime
-from streamlit_autorefresh import st_autorefresh
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    def st_autorefresh(*args, **kwargs):
+        return None
 
 # Set page configuration with a modern, wide layout
 st.set_page_config(
