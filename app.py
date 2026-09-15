@@ -365,6 +365,23 @@ with tab_palika:
     if activity_output != "All outputs":
         activity_details = activity_details[activity_details['CCC Output'] == activity_output]
 
+    activity_paragraphs = activity_details[
+        activity_details['Activity'].fillna('').astype(str).str.strip().ne('')
+    ]
+    st.markdown("#### Activities undertaken to achieve progress")
+    if activity_paragraphs.empty:
+        st.info("No activity description has been recorded in the Excel sheet for this output.")
+    else:
+        for _, activity_row in activity_paragraphs.iterrows():
+            indicator = str(activity_row['Indicator'])
+            with st.expander(indicator):
+                st.write(str(activity_row['Activity']))
+                st.caption(
+                    f"Output: {activity_row['CCC Output']} | "
+                    f"Daily achieved: {activity_row['Progress']:,.0f} "
+                    f"of {activity_row['Target']:,.0f}"
+                )
+
     activity_details['Daily progress %'] = (
         activity_details['Progress'] / activity_details['Target'].replace(0, 1) * 100
     ).round(1)
