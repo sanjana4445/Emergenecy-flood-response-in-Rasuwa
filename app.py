@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from pathlib import Path
 
 # Set page configuration with a modern, wide layout
 st.set_page_config(
@@ -133,61 +134,89 @@ def apply_chart_theme(figure):
 PALIKAS = ["Gosaikunda", "Uttargaya", "Kalika", "Aamachhodingmo"]
 
 @st.cache_data
-def load_base_data():
-    file_path = "Chaya_Monitoring Matrix.xlsx"
+def load_base_data(workbook_mtime):
+    file_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
     try:
         xls = pd.ExcelFile(file_path)
-        df_d = pd.read_excel(xls, sheet_name="WASH Response_Daily_Chaya", skiprows=1)
-        df_d = df_d.dropna(how='all', axis=1)
-        df_d.columns = [
-            "SN", "Agency", "Province", "District", "Municipality", "Ward",
-            "Result_Statement", "Indicator", "Unit", "Target", "Progress", "Activities"
-        ]
-        df_d = df_d[
-            df_d['Indicator'].notnull()
-            & (df_d['Indicator'] != 'Performance indicator/s')
-        ].copy()
+        def read_response_sheet(sheet_name, weekly=False):
+            data = pd.read_excel(xls, sheet_name=sheet_name, skiprows=1)
+            data = data.dropna(how='all').dropna(how='all', axis=1)
+            if weekly:
+                # Weekly workbook columns contain an extra activity description.
+                names = [
+                    "SN", "Agency", "Province", "District", "Municipality", "Ward",
+                    "Result_Statement", "Indicator", "Activities", "Unit", "Target",
+                    "Progress", "Notes"
+                ]
+            else:
+                names = [
+                    "SN", "Agency", "Province", "District", "Municipality", "Ward",
+                    "Result_Statement", "Indicator", "Unit", "Target", "Progress", "Activities"
+                ]
+            if len(data.columns) != len(names):
+                raise ValueError(f"{sheet_name} has {len(data.columns)} usable columns; expected {len(names)}")
+            data.columns = names
+            return data[
+                data['Indicator'].notnull()
+                & (data['Indicator'] != 'Performance indicator/s')
+            ].copy()
+
+        df_d = read_response_sheet("WASH Response_Daily_Chaya")
+        df_w = read_response_sheet("WASH Response_Weekly_Chaya", weekly=True)
         df_d['Result_Area'] = df_d['Result_Statement'].ffill().apply(
             lambda x: x.split('\n')[0] if pd.notnull(x) else "General"
         )
         df_d['Target'] = pd.to_numeric(df_d['Target'], errors='coerce').fillna(0)
         df_d['Progress'] = pd.to_numeric(df_d['Progress'], errors='coerce').fillna(0)
-        return df_d
+        df_w['Target'] = pd.to_numeric(df_w['Target'], errors='coerce').fillna(0)
+        df_w['Progress'] = pd.to_numeric(df_w['Progress'], errors='coerce').fillna(0)
+        weekly = df_w[['Indicator', 'Target', 'Progress']].rename(columns={
+            'Target': 'Weekly Target', 'Progress': 'Weekly Progress'
+        })
+        return df_d.merge(weekly, on='Indicator', how='left').fillna({
+            'Weekly Target': 0, 'Weekly Progress': 0
+        })
     except Exception as e:
         st.error(f"Error loading Excel file: {e}")
         return pd.DataFrame()
 
-raw_df = load_base_data()
+workbook_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
+workbook_mtime = workbook_path.stat().st_mtime_ns
+raw_df = load_base_data(workbook_mtime)
 
 # Initialize the data once; future changes come only from the Data editor.
-DATA_MATRIX_VERSION = 5
-if st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION and not raw_df.empty:
-    if 'data_matrix' in st.session_state and st.session_state.get('data_matrix_version') == 4:
-        st.session_state.data_matrix['Weekly Progress'] = 0
-        st.session_state.data_matrix['Monthly Progress'] = 0
-    else:
-        rows = []
-        for idx, row in raw_df.iterrows():
-            target = int(row['Target'])
-            base_target, remainder = divmod(target, len(PALIKAS))
-            for palika_index, palika in enumerate(PALIKAS):
-                p_target = base_target + (1 if palika_index < remainder else 0)
-                rows.append({
-                    'SN': row['SN'],
-                    'CCC Output': row['Result_Area'],
-                    'Result Statement': row['Result_Statement'],
-                    'Indicator': row['Indicator'],
-                    'Activity': row['Activities'] if pd.notna(row['Activities']) else '',
-                    'Palika': palika,
-                    'Unit': row['Unit'],
-                    'Target': p_target,
-                    'Progress': 0,
-                    'Weekly Progress': 0,
-                    'Monthly Progress': 0,
-                    'Status': 'Not Started'
-                })
-        st.session_state.data_matrix = pd.DataFrame(rows)
+DATA_MATRIX_VERSION = 6
+data_needs_refresh = (
+    st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION
+    or st.session_state.get('data_matrix_source_mtime') != workbook_mtime
+)
+if data_needs_refresh and not raw_df.empty:
+    rows = []
+    for _, row in raw_df.iterrows():
+        target = int(row['Target'])
+        base_target, remainder = divmod(target, len(PALIKAS))
+        for palika_index, palika in enumerate(PALIKAS):
+            p_target = base_target + (1 if palika_index < remainder else 0)
+            progress_share = row['Progress'] * p_target / target if target else 0
+            weekly_target = row['Weekly Target'] * p_target / target if target else 0
+            weekly_progress_share = row['Weekly Progress'] * p_target / target if target else 0
+            rows.append({
+                'SN': row['SN'],
+                'CCC Output': row['Result_Area'],
+                'Result Statement': row['Result_Statement'],
+                'Indicator': row['Indicator'],
+                'Activity': row['Activities'] if pd.notna(row['Activities']) else '',
+                'Palika': palika,
+                'Unit': row['Unit'],
+                'Target': p_target,
+                'Progress': progress_share,
+                'Weekly Target': weekly_target,
+                'Weekly Progress': weekly_progress_share,
+                'Status': 'Not Started'
+            })
+    st.session_state.data_matrix = pd.DataFrame(rows)
     st.session_state.data_matrix_version = DATA_MATRIX_VERSION
+    st.session_state.data_matrix_source_mtime = workbook_mtime
 
 # Reference-style header and inline municipality controls.
 st.markdown("""
@@ -555,45 +584,62 @@ with tab_output:
 # TAB 4: TIME-LAPSE & TRENDS
 # =========================================================
 with tab_timelapse:
-    st.subheader("Time-Lapse & Response Velocity")
-    st.caption("Simulated daily/weekly cumulative trajectory over emergency period")
-    
-    # Generate Time Series Simulation
-    dates = pd.date_range(start="2025-08-01", periods=12, freq="W")
-    time_data = []
-    
-    for i, date in enumerate(dates):
-        factor = (i + 1) / len(dates)
-        time_data.append({
-            'Date': date.strftime('%Y-%m-%d'),
-            'Water Supply': int(tot_progress * 0.4 * factor),
-            'Sanitation': int(tot_progress * 0.3 * factor),
-            'Hygiene & SBC': int(tot_progress * 0.3 * factor),
-            'Cumulative Progress': int(tot_progress * factor)
-        })
-        
-    df_time = pd.DataFrame(time_data)
-    
-    fig_time = px.line(
-        df_time,
-        x='Date',
-        y=['Water Supply', 'Sanitation', 'Hygiene & SBC', 'Cumulative Progress'],
-        markers=True,
-        title="Weekly Cumulative Achievement Trajectory",
-        height=420
+    st.subheader("Daily and Weekly Target Performance")
+    st.caption("All values below are read from the Daily and Weekly sheets in the Excel workbook.")
+
+    period_summary = df_active.groupby('CCC Output')[
+        ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
+    ].sum().reset_index()
+    period_summary['Daily %'] = (period_summary['Progress'] / period_summary['Target'].replace(0, 1) * 100).round(1)
+    period_summary['Weekly %'] = (period_summary['Weekly Progress'] / period_summary['Weekly Target'].replace(0, 1) * 100).round(1)
+    period_summary['Daily Target Met'] = period_summary.apply(
+        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else ('Not met' if row['Target'] > 0 else 'No target recorded'), axis=1
     )
+    period_summary['Weekly Target Met'] = period_summary.apply(
+        lambda row: 'Met' if row['Weekly Target'] > 0 and row['Weekly Progress'] >= row['Weekly Target'] else ('Not met' if row['Weekly Target'] > 0 else 'No target recorded'), axis=1
+    )
+
+    chart_data = period_summary.melt(
+        id_vars='CCC Output',
+        value_vars=['Target', 'Progress', 'Weekly Target', 'Weekly Progress'],
+        var_name='Measure', value_name='Value'
+    )
+    chart_data['Measure'] = chart_data['Measure'].replace({
+        'Progress': 'Daily achieved', 'Weekly Progress': 'Weekly achieved'
+    })
+    fig_time = px.bar(
+        chart_data, x='Value', y='CCC Output', color='Measure', barmode='group',
+        orientation='h', text='Value', title='Daily and weekly target vs achieved by output',
+        color_discrete_map={
+            'Target': '#e4a11b', 'Daily achieved': '#0f626b',
+            'Weekly Target': '#f4c56a', 'Weekly achieved': '#58aeb5'
+        }, height=max(360, min(620, 55 * len(period_summary) + 120))
+    )
+    fig_time.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
     st.plotly_chart(apply_chart_theme(fig_time), use_container_width=True)
 
+    st.markdown("#### Target met by output")
+    st.caption("A target is met when achieved progress is greater than or equal to the corresponding Excel target.")
+    display_period = period_summary.rename(columns={
+        'CCC Output': 'Output', 'Target': 'Daily target', 'Progress': 'Daily achieved',
+        'Weekly Target': 'Weekly target', 'Weekly Progress': 'Weekly achieved',
+        'Daily %': 'Daily achievement %', 'Weekly %': 'Weekly achievement %'
+    })
+    st.dataframe(
+        display_period[['Output', 'Daily target', 'Daily achieved', 'Daily achievement %', 'Daily Target Met',
+                        'Weekly target', 'Weekly achieved', 'Weekly achievement %', 'Weekly Target Met']],
+        use_container_width=True, hide_index=True
+    )
+
     period_summary = df_active.groupby('Indicator')[
-        ['Target', 'Weekly Progress', 'Monthly Progress']
+        ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
     ].sum().reset_index()
-    st.markdown("#### Weekly and monthly progress")
-    st.caption("Update these period values from the Data editor to track progress against each indicator target.")
     fig_period = go.Figure()
     for column, label, color in [
-        ('Target', 'Target', '#b8c4c1'),
-        ('Weekly Progress', 'This week', '#1594a2'),
-        ('Monthly Progress', 'This month', '#0f626b')
+        ('Target', 'Daily target', '#b8c4c1'),
+        ('Progress', 'Daily achieved', '#0f626b'),
+        ('Weekly Target', 'Weekly target', '#f4c56a'),
+        ('Weekly Progress', 'Weekly achieved', '#1594a2')
     ]:
         fig_period.add_trace(go.Bar(
             y=period_summary['Indicator'],
@@ -696,11 +742,11 @@ with tab_monitoring:
     with monitor_right:
         st.markdown("#### Progress trend")
         recorded_week = int(df_active['Weekly Progress'].sum())
-        recorded_month = int(df_active['Monthly Progress'].sum())
+        recorded_weekly_target = int(df_active['Weekly Target'].sum())
         recorded_total = int(df_active['Progress'].sum())
         trend_data = pd.DataFrame({
-            'Period': ['This week', 'This month', 'Cumulative'],
-            'Progress': [recorded_week, recorded_month, recorded_total]
+            'Period': ['Weekly target', 'Weekly achieved', 'Daily achieved'],
+            'Progress': [recorded_weekly_target, recorded_week, recorded_total]
         })
         fig_trend = px.line(
             trend_data,
@@ -713,7 +759,7 @@ with tab_monitoring:
         )
         fig_trend.update_traces(texttemplate='%{text:,.0f}', textposition='top center', line_color='#0f626b')
         st.plotly_chart(apply_chart_theme(fig_trend), use_container_width=True)
-        st.caption("Values are based on the period totals entered in the Data editor.")
+        st.caption("Values are based on the Daily and Weekly Excel sheets.")
 
     st.markdown("#### Follow-up alerts")
     alert_table = df_active.groupby('Indicator')[['Target', 'Progress']].sum().reset_index()
@@ -753,7 +799,7 @@ with tab_editor:
     st.info("Modify Targets or Progress in the table, then apply the changes to refresh the dashboard.")
 
     edited_df = st.data_editor(
-        st.session_state.data_matrix[['Palika', 'CCC Output', 'Result Statement', 'Indicator', 'Activity', 'Unit', 'Target', 'Progress', 'Weekly Progress', 'Monthly Progress']],
+        st.session_state.data_matrix[['Palika', 'CCC Output', 'Result Statement', 'Indicator', 'Activity', 'Unit', 'Target', 'Progress', 'Weekly Target', 'Weekly Progress']],
         num_rows="dynamic",
         use_container_width=True,
         key="matrix_editor"
@@ -763,8 +809,8 @@ with tab_editor:
         st.session_state.data_matrix['Target'] = edited_df['Target']
         st.session_state.data_matrix['Progress'] = edited_df['Progress']
         st.session_state.data_matrix['Activity'] = edited_df['Activity']
+        st.session_state.data_matrix['Weekly Target'] = edited_df['Weekly Target']
         st.session_state.data_matrix['Weekly Progress'] = edited_df['Weekly Progress']
-        st.session_state.data_matrix['Monthly Progress'] = edited_df['Monthly Progress']
         st.success("Dashboard successfully updated with your new target and progress values.")
         st.rerun()
 
