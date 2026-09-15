@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+from datetime import datetime
 
 # Set page configuration with a modern, wide layout
 st.set_page_config(
@@ -184,37 +185,34 @@ workbook_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
 workbook_mtime = workbook_path.stat().st_mtime_ns
 raw_df = load_base_data(workbook_mtime)
 
+OUTPUT_ORDER = [
+    next(
+        (value for value in raw_df['Result_Area'].dropna().unique() if value.startswith(f'CCC W{number}')),
+        f'CCC W{number}: No data recorded'
+    )
+    for number in range(1, 7)
+]
+
+def summarize_outputs(frame, value_columns):
+    return frame.groupby('CCC Output')[value_columns].sum().reindex(OUTPUT_ORDER, fill_value=0)
+
 # Initialize the data once; future changes come only from the Data editor.
-DATA_MATRIX_VERSION = 6
+DATA_MATRIX_VERSION = 7
 data_needs_refresh = (
     st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION
     or st.session_state.get('data_matrix_source_mtime') != workbook_mtime
 )
 if data_needs_refresh and not raw_df.empty:
-    rows = []
-    for _, row in raw_df.iterrows():
-        target = int(row['Target'])
-        base_target, remainder = divmod(target, len(PALIKAS))
-        for palika_index, palika in enumerate(PALIKAS):
-            p_target = base_target + (1 if palika_index < remainder else 0)
-            progress_share = row['Progress'] * p_target / target if target else 0
-            weekly_target = row['Weekly Target'] * p_target / target if target else 0
-            weekly_progress_share = row['Weekly Progress'] * p_target / target if target else 0
-            rows.append({
-                'SN': row['SN'],
-                'CCC Output': row['Result_Area'],
-                'Result Statement': row['Result_Statement'],
-                'Indicator': row['Indicator'],
-                'Activity': row['Activities'] if pd.notna(row['Activities']) else '',
-                'Palika': palika,
-                'Unit': row['Unit'],
-                'Target': p_target,
-                'Progress': progress_share,
-                'Weekly Target': weekly_target,
-                'Weekly Progress': weekly_progress_share,
-                'Status': 'Not Started'
-            })
-    st.session_state.data_matrix = pd.DataFrame(rows)
+    st.session_state.data_matrix = raw_df.assign(
+        **{
+            'CCC Output': raw_df['Result_Area'],
+            'Activity': raw_df['Activities'].fillna(''),
+            'Palika': 'District total'
+        }
+    )[[
+        'SN', 'CCC Output', 'Result_Statement', 'Indicator', 'Activity', 'Palika',
+        'Unit', 'Target', 'Progress', 'Weekly Target', 'Weekly Progress'
+    ]].rename(columns={'Result_Statement': 'Result Statement'})
     st.session_state.data_matrix_version = DATA_MATRIX_VERSION
     st.session_state.data_matrix_source_mtime = workbook_mtime
 
@@ -225,23 +223,12 @@ st.markdown("""
     <div class="hero-brand"><div class="hero-mark">💧</div><div><h1>Rasuwa Flood Response</h1><p>WASH monitoring dashboard</p></div></div>
     <div class="export-label">⇩ &nbsp; Export CSV</div>
   </div>
-  <div class="hero-meta"><span class="hero-pill">⌖ &nbsp;Rasuwa District, Bagmati Province</span><span class="hero-pill">Agency: UNICEF</span><span class="hero-pill">◷ &nbsp;Last update: No updates yet</span></div>
+    <div class="hero-meta"><span class="hero-pill">⌖ &nbsp;Rasuwa District, Bagmati Province</span><span class="hero-pill">Agency: UNICEF</span><span class="hero-pill">◷ &nbsp;Last update: {datetime.fromtimestamp(workbook_mtime / 1_000_000_000).strftime('%d %b %Y, %I:%M %p')}</span></div>
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="filter-label">Filter by municipality</div>', unsafe_allow_html=True)
-filter_cols = st.columns(5)
-if 'active_palika' not in st.session_state:
-    st.session_state.active_palika = 'All Rasuwa'
-for index, palika in enumerate(['All Rasuwa'] + PALIKAS):
-    with filter_cols[index if index < 5 else 4]:
-        if st.button(
-            palika,
-            key=f"palika_{palika}",
-            type="primary" if st.session_state.active_palika == palika else "secondary"
-        ):
-            st.session_state.active_palika = palika
-selected_palikas = PALIKAS if st.session_state.active_palika == 'All Rasuwa' else [st.session_state.active_palika]
+st.markdown('<div class="filter-label">Dashboard scope: Excel output totals</div>', unsafe_allow_html=True)
+selected_palikas = ['District total']
 
 # Output filter remains available in the data editor workflow.
 outputs = list(st.session_state.data_matrix['CCC Output'].unique()) if 'data_matrix' in st.session_state else []
@@ -249,22 +236,20 @@ selected_outputs = outputs
 
 # Filter Dataframe
 df_active = st.session_state.data_matrix[
-    (st.session_state.data_matrix['Palika'].isin(selected_palikas)) &
     (st.session_state.data_matrix['CCC Output'].isin(selected_outputs))
 ].copy()
 
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
-indicator_summary = df_active.groupby('Indicator')[['Target', 'Progress']].sum()
-achieved_count = int((indicator_summary['Progress'] >= indicator_summary['Target']).sum())
-progress_count = int(((indicator_summary['Progress'] > 0) & (indicator_summary['Progress'] < indicator_summary['Target'])).sum())
-not_started_count = int((indicator_summary['Progress'] <= 0).sum())
-indicator_count = len(indicator_summary)
-overall_pct = (df_active['Progress'].sum() / df_active['Target'].sum() * 100) if df_active['Target'].sum() else 0
+output_summary = summarize_outputs(df_active, ['Target', 'Progress'])
+achieved_count = int((output_summary['Progress'] >= output_summary['Target']).sum())
+progress_count = int(((output_summary['Progress'] > 0) & (output_summary['Progress'] < output_summary['Target'])).sum())
+not_started_count = int((output_summary['Progress'] <= 0).sum())
+output_count = len(output_summary)
 
 st.markdown(f"""
 <div class="summary-card">
-    <div><div class="summary-value">{overall_pct:.0f}%</div><div class="summary-copy">Overall progress across {indicator_count} daily indicators</div></div>
+    <div><div class="summary-value">{output_count}</div><div class="summary-copy">Excel output targets being monitored</div></div>
     <div class="summary-status">
         <div><span class="status-dot status-done">✓</span>{achieved_count} achieved</div>
         <div><span class="status-dot status-progress">⌁</span>{progress_count} in progress</div>
@@ -289,7 +274,6 @@ with tab_exec:
     
     tot_target = df_active['Target'].sum()
     tot_progress = df_active['Progress'].sum()
-    overall_pct = (tot_progress / tot_target * 100) if tot_target > 0 else 0
     gap = tot_target - tot_progress
     
     st.markdown('<div class="dashboard-section"><h4>At a glance</h4><p>Key response numbers for the selected municipalities and output areas.</p></div>', unsafe_allow_html=True)
@@ -313,9 +297,9 @@ with tab_exec:
     with m3:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">Response Achievement Rate</div>
-            <div class="metric-value">{overall_pct:.1f}%</div>
-            <div class="metric-sub">Completion Level</div>
+            <div class="metric-title">Outputs Meeting Target</div>
+            <div class="metric-value">{achieved_count} / {output_count}</div>
+            <div class="metric-sub">Output-level daily status</div>
         </div>
         """, unsafe_allow_html=True)
     with m4:
@@ -335,7 +319,7 @@ with tab_exec:
         st.markdown("**Target vs achieved progress**")
         fig_summary = go.Figure()
         
-        ind_group = df_active.groupby('Indicator')[['Target', 'Progress']].sum().reset_index()
+        ind_group = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
         
         fig_summary.add_trace(go.Bar(
             y=ind_group['Indicator'],
@@ -368,39 +352,35 @@ with tab_exec:
             height=420,
             margin=dict(l=10, r=55, t=35, b=20),
             xaxis_title='Target / people or events reached',
-            yaxis_title='Activity / indicator',
+            yaxis_title='Output',
             legend=dict(orientation="h", y=1.1, x=0)
         )
         st.plotly_chart(apply_chart_theme(fig_summary), use_container_width=True)
 
     with c_right:
-        st.markdown("**Overall completion**")
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number+delta",
-            value = overall_pct,
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "Response Completion %"},
-            delta = {'reference': 100, 'increasing': {'color': "green"}},
-            gauge = {
-                'axis': {'range': [None, 100]},
-                'bar': {'color': "#0284c7"},
-                'steps': [
-                    {'range': [0, 50], 'color': "#fee2e2"},
-                    {'range': [50, 80], 'color': "#fef9c3"},
-                    {'range': [80, 100], 'color': "#dcfce7"}
-                ],
-                'threshold': {
-                    'line': {'color': "red", 'width': 4},
-                    'thickness': 0.75,
-                    'value': 100
-                }
-            }
-        ))
-        fig_gauge.update_layout(height=380, margin=dict(l=20, r=20, t=30, b=20))
-        st.plotly_chart(apply_chart_theme(fig_gauge), use_container_width=True)
+        st.markdown("**Output target status**")
+        output_status = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
+        output_status['Progress %'] = (
+            output_status['Progress'] / output_status['Target'].replace(0, 1) * 100
+        ).round(1)
+        output_status['Target status'] = output_status.apply(
+            lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
+        )
+        st.dataframe(
+            output_status[['CCC Output', 'Target', 'Progress', 'Progress %', 'Target status']],
+            column_config={
+                'CCC Output': 'Output',
+                'Target': st.column_config.NumberColumn('Target', format='%d'),
+                'Progress': st.column_config.NumberColumn('Achieved', format='%d'),
+                'Progress %': st.column_config.NumberColumn('Progress %', format='%.1f%%')
+            },
+            use_container_width=True,
+            hide_index=True,
+            height=380
+        )
 
     st.markdown('<div class="dashboard-section"><h4>Target and progress by output area</h4><p>A simple output-level view of planned reach versus achieved progress.</p></div>', unsafe_allow_html=True)
-    overview_output = df_active.groupby('CCC Output')[['Target', 'Progress']].sum().reset_index()
+    overview_output = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
     overview_output_long = overview_output.melt(
         id_vars='CCC Output',
         value_vars=['Target', 'Progress'],
@@ -434,23 +414,26 @@ with tab_exec:
     st.plotly_chart(apply_chart_theme(fig_overview_output), use_container_width=True)
 
     st.markdown('<div class="dashboard-section"><h4>Coverage by municipality</h4><p>Find uneven coverage quickly and focus follow-up on the largest remaining gaps.</p></div>', unsafe_allow_html=True)
-    palika_summary = df_active.groupby('Palika')[['Target', 'Progress']].sum().reset_index()
+    palika_summary = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
     palika_summary['Completion %'] = (
         palika_summary['Progress'] / palika_summary['Target'].replace(0, 1) * 100
     ).round(1)
     palika_summary['Gap'] = palika_summary['Target'] - palika_summary['Progress']
+    palika_summary['Target status'] = palika_summary.apply(
+        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
+    )
 
     coverage_left, coverage_right = st.columns([6, 4])
     with coverage_left:
         fig_coverage = px.bar(
             palika_summary.sort_values('Completion %'),
-            x='Palika',
+            x='CCC Output',
             y='Completion %',
             text='Completion %',
             color='Completion %',
             color_continuous_scale=['#f97316', '#facc15', '#16a34a'],
             range_color=[0, 100],
-            title="Completion rate by municipality",
+            title="Progress percentage by output",
             height=340
         )
         fig_coverage.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
@@ -462,17 +445,20 @@ with tab_exec:
         st.plotly_chart(apply_chart_theme(fig_coverage), use_container_width=True)
 
     with coverage_right:
-        priority = palika_summary.sort_values('Gap', ascending=False).head(4).copy()
+        priority = palika_summary.sort_values('Gap', ascending=False).head(6).copy()
         priority['Gap'] = priority['Gap'].map('{:,.0f}'.format)
         priority['Completion %'] = priority['Completion %'].map('{:.1f}%'.format)
         st.markdown("**Priority follow-up list**")
         st.markdown('<div class="priority-table">Sorted by unmet target, so the biggest coverage gaps are visible first.</div>', unsafe_allow_html=True)
         st.dataframe(
-            priority[['Palika', 'Gap', 'Completion %']],
+            priority[['CCC Output', 'Target', 'Progress', 'Gap', 'Completion %', 'Target status']],
             column_config={
-                'Palika': 'Municipality',
+                'CCC Output': 'Output',
+                'Target': 'Target',
+                'Progress': 'Achieved',
                 'Gap': 'Unmet target',
-                'Completion %': 'Completion'
+                'Completion %': 'Progress %',
+                'Target status': 'Target status'
             },
             use_container_width=True,
             hide_index=True
@@ -482,10 +468,10 @@ with tab_exec:
 # TAB 2: PALIKA-WISE PROGRESS
 # =========================================================
 with tab_palika:
-    st.subheader("Rasuwa District Municipality Breakdown")
-    st.caption("Comparative monitoring across Gosaikunda, Uttargaya, Kalika, and Aamachhodingmo")
+    st.subheader("Output-Level Target Breakdown")
+    st.caption("The workbook contains district-level records, so all totals are grouped by the six Excel outputs.")
     
-    palika_summary = df_active.groupby('Palika')[['Target', 'Progress']].sum().reset_index()
+    palika_summary = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
     palika_summary['Completion %'] = (palika_summary['Progress'] / palika_summary['Target'] * 100).round(1)
     
     col_p1, col_p2 = st.columns([6, 4])
@@ -493,10 +479,10 @@ with tab_palika:
     with col_p1:
         fig_palika = px.bar(
             palika_summary,
-            x='Palika',
+            x='CCC Output',
             y=['Target', 'Progress'],
             barmode='group',
-            title="Target vs Achieved by Palika",
+            title="Target vs Achieved by Output",
             color_discrete_map={'Target': '#cbd5e1', 'Progress': '#0d9488'},
             height=400
         )
@@ -505,7 +491,7 @@ with tab_palika:
     with col_p2:
         fig_pie = px.pie(
             palika_summary,
-            names='Palika',
+            names='CCC Output',
             values='Progress',
             title="Share of Total Response Reached",
             hole=0.4,
@@ -536,7 +522,7 @@ with tab_palika:
 with tab_output:
     st.subheader("CCC Output-Wise Detailed Analysis")
 
-    output_totals = df_active.groupby('CCC Output')[['Target', 'Progress']].sum().reset_index()
+    output_totals = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
     output_chart_data = output_totals.melt(
         id_vars='CCC Output',
         value_vars=['Target', 'Progress'],
@@ -578,6 +564,9 @@ with tab_output:
     st.markdown("#### Output Performance Breakdown")
     out_table = output_totals.copy()
     out_table['Achievement %'] = (out_table['Progress'] / out_table['Target'] * 100).round(1)
+    out_table['Target status'] = out_table.apply(
+        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else 'Not met', axis=1
+    )
     st.dataframe(out_table, use_container_width=True, hide_index=True)
 
 # =========================================================
@@ -587,9 +576,9 @@ with tab_timelapse:
     st.subheader("Daily and Weekly Target Performance")
     st.caption("All values below are read from the Daily and Weekly sheets in the Excel workbook.")
 
-    period_summary = df_active.groupby('CCC Output')[
-        ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
-    ].sum().reset_index()
+    period_summary = summarize_outputs(
+        df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
+    ).reset_index()
     period_summary['Daily %'] = (period_summary['Progress'] / period_summary['Target'].replace(0, 1) * 100).round(1)
     period_summary['Weekly %'] = (period_summary['Weekly Progress'] / period_summary['Weekly Target'].replace(0, 1) * 100).round(1)
     period_summary['Daily Target Met'] = period_summary.apply(
@@ -631,101 +620,26 @@ with tab_timelapse:
         use_container_width=True, hide_index=True
     )
 
-    period_summary = df_active.groupby('Indicator')[
-        ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
-    ].sum().reset_index()
-    fig_period = go.Figure()
-    for column, label, color in [
-        ('Target', 'Daily target', '#b8c4c1'),
-        ('Progress', 'Daily achieved', '#0f626b'),
-        ('Weekly Target', 'Weekly target', '#f4c56a'),
-        ('Weekly Progress', 'Weekly achieved', '#1594a2')
-    ]:
-        fig_period.add_trace(go.Bar(
-            y=period_summary['Indicator'],
-            x=period_summary[column],
-            name=label,
-            orientation='h',
-            marker_color=color
-        ))
-    fig_period.update_layout(
-        barmode='group',
-        height=max(320, min(620, 45 * len(period_summary) + 100)),
-        margin=dict(l=10, r=20, t=20, b=20),
-        xaxis_title='People / events reached',
-        yaxis_title='Activity / indicator',
-        legend=dict(orientation='h', y=1.08, x=0)
-    )
-    st.plotly_chart(apply_chart_theme(fig_period), use_container_width=True)
-
-    # Compare each activity indicator with the completion expected by the elapsed timeline.
-    timeline_start = dates.min()
-    timeline_end = dates.max()
-    elapsed_ratio = min(max((pd.Timestamp.today() - timeline_start) / (timeline_end - timeline_start), 0), 1)
-    expected_pct = max(10, elapsed_ratio * 100)
-
-    risk_table = df_active.groupby('Indicator')[['Target', 'Progress']].sum().reset_index()
-    risk_table['Completion %'] = (
-        risk_table['Progress'] / risk_table['Target'].replace(0, 1) * 100
-    ).clip(0, 100).round(1)
-    risk_table['Risk gap'] = (expected_pct - risk_table['Completion %']).round(1)
-    risk_table['Risk status'] = risk_table['Risk gap'].apply(
-        lambda gap: 'At risk' if gap >= 20 else ('Watch' if gap > 0 else 'On track')
-    )
-    risk_table = risk_table.sort_values(['Risk gap', 'Completion %'], ascending=[False, True])
-
-    st.markdown("#### Activities at risk")
-    st.caption(f"Expected completion by the elapsed timeline: {expected_pct:.0f}%")
-    fig_risk = px.bar(
-        risk_table,
-        x='Completion %',
-        y='Indicator',
-        orientation='h',
-        color='Risk status',
-        color_discrete_map={'At risk': '#d97706', 'Watch': '#eab308', 'On track': '#20965a'},
-        range_x=[0, 100],
-        labels={'Indicator': 'Activity / indicator', 'Completion %': 'Completion (%)'},
-        height=max(320, min(620, 45 * len(risk_table) + 100))
-    )
-    fig_risk.add_vline(
-        x=expected_pct,
-        line_dash='dash',
-        line_color='#0f626b',
-        annotation_text='Expected by now',
-        annotation_position='top'
-    )
-    fig_risk.update_layout(
-        margin=dict(l=10, r=20, t=35, b=20),
-        legend=dict(orientation='h', y=1.08, x=0),
-        yaxis={'categoryorder': 'array', 'categoryarray': risk_table['Indicator'].tolist()}
-    )
-    st.plotly_chart(apply_chart_theme(fig_risk), use_container_width=True)
-
 # =========================================================
 # TAB 5: MONITORING VIEW
 # =========================================================
 with tab_monitoring:
     st.subheader("Progress Monitoring Center")
-    st.caption("Use the heatmap to compare municipalities, the trend to track movement, and the alerts to prioritize follow-up.")
+    st.caption("Use the output heatmap to compare daily and weekly progress, and the alerts to prioritize follow-up.")
 
     monitor_left, monitor_right = st.columns([6, 4])
     with monitor_left:
-        st.markdown("#### Completion heatmap")
-        heatmap_data = df_active.pivot_table(
-            index='Indicator',
-            columns='Palika',
-            values=['Target', 'Progress'],
-            aggfunc='sum',
-            fill_value=0
+        st.markdown("#### Daily and weekly progress by output")
+        tracking = summarize_outputs(
+            df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
         )
-        heatmap_pct = pd.DataFrame(index=heatmap_data.index.get_level_values(0).unique())
-        for palika in selected_palikas:
-            target_values = heatmap_data.get(('Target', palika), 0)
-            progress_values = heatmap_data.get(('Progress', palika), 0)
-            heatmap_pct[palika] = (
-                progress_values / target_values.replace(0, 1) * 100
-            ).round(1)
-        heatmap_pct = heatmap_pct.sort_index()
+        heatmap_pct = pd.DataFrame(index=tracking.index)
+        heatmap_pct['Daily progress %'] = (
+            tracking['Progress'] / tracking['Target'].replace(0, 1) * 100
+        ).round(1)
+        heatmap_pct['Weekly progress %'] = (
+            tracking['Weekly Progress'] / tracking['Weekly Target'].replace(0, 1) * 100
+        ).round(1)
         fig_heatmap = px.imshow(
             heatmap_pct,
             text_auto='.1f',
@@ -733,36 +647,33 @@ with tab_monitoring:
             color_continuous_scale=['#fee2e2', '#fef3c7', '#bbf7d0', '#15803d'],
             range_color=[0, 100,
             ],
-            labels={'x': 'Municipality', 'y': 'Indicator', 'color': 'Completion %'},
+            labels={'x': 'Period', 'y': 'Output', 'color': 'Progress %'},
             height=max(420, min(760, 42 * len(heatmap_pct) + 140))
         )
         fig_heatmap.update_traces(texttemplate='%{z:.1f}%', textfont={'color': '#243331'})
         st.plotly_chart(apply_chart_theme(fig_heatmap), use_container_width=True)
 
     with monitor_right:
-        st.markdown("#### Progress trend")
-        recorded_week = int(df_active['Weekly Progress'].sum())
-        recorded_weekly_target = int(df_active['Weekly Target'].sum())
-        recorded_total = int(df_active['Progress'].sum())
-        trend_data = pd.DataFrame({
-            'Period': ['Weekly target', 'Weekly achieved', 'Daily achieved'],
-            'Progress': [recorded_weekly_target, recorded_week, recorded_total]
-        })
-        fig_trend = px.line(
-            trend_data,
-            x='Period',
-            y='Progress',
-            markers=True,
-            text='Progress',
-            labels={'Progress': 'People / events reached'},
-            height=320
+        st.markdown("#### Recorded daily and weekly data")
+        trend_data = tracking.reset_index().melt(
+            id_vars='CCC Output',
+            value_vars=['Progress', 'Weekly Progress'],
+            var_name='Period', value_name='Achieved'
         )
-        fig_trend.update_traces(texttemplate='%{text:,.0f}', textposition='top center', line_color='#0f626b')
+        trend_data['Period'] = trend_data['Period'].replace({
+            'Progress': 'Daily', 'Weekly Progress': 'Weekly'
+        })
+        fig_trend = px.bar(
+            trend_data, x='CCC Output', y='Achieved', color='Period', barmode='group',
+            text='Achieved', title='Recorded achieved values by output', height=320,
+            color_discrete_map={'Daily': '#0f626b', 'Weekly': '#58aeb5'}
+        )
+        fig_trend.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
         st.plotly_chart(apply_chart_theme(fig_trend), use_container_width=True)
-        st.caption("Values are based on the Daily and Weekly Excel sheets.")
+        st.caption("Daily and weekly achieved values come directly from the Excel sheets.")
 
     st.markdown("#### Follow-up alerts")
-    alert_table = df_active.groupby('Indicator')[['Target', 'Progress']].sum().reset_index()
+    alert_table = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
     alert_table['Completion %'] = (
         alert_table['Progress'] / alert_table['Target'].replace(0, 1) * 100
     ).round(1)
@@ -775,13 +686,13 @@ with tab_monitoring:
         ['Priority', 'Remaining'], ascending=[True, False]
     )
     if alert_table.empty:
-        st.success("No low-progress indicators need follow-up for the selected municipalities.")
+        st.success("No low-progress outputs need follow-up.")
     else:
         st.dataframe(
-            alert_table[['Priority', 'Indicator', 'Target', 'Progress', 'Remaining', 'Completion %']],
+            alert_table[['Priority', 'CCC Output', 'Target', 'Progress', 'Remaining', 'Completion %']],
             column_config={
                 'Priority': 'Priority',
-                'Indicator': 'Activity / indicator',
+                'CCC Output': 'Output',
                 'Target': st.column_config.NumberColumn('Target', format='%d'),
                 'Progress': st.column_config.NumberColumn('Progress', format='%d'),
                 'Remaining': st.column_config.NumberColumn('Remaining', format='%d'),
@@ -799,10 +710,11 @@ with tab_editor:
     st.info("Modify Targets or Progress in the table, then apply the changes to refresh the dashboard.")
 
     edited_df = st.data_editor(
-        st.session_state.data_matrix[['Palika', 'CCC Output', 'Result Statement', 'Indicator', 'Activity', 'Unit', 'Target', 'Progress', 'Weekly Target', 'Weekly Progress']],
+        st.session_state.data_matrix[['SN', 'CCC Output', 'Result Statement', 'Indicator', 'Activity', 'Unit', 'Target', 'Progress', 'Weekly Target', 'Weekly Progress']],
         num_rows="dynamic",
         use_container_width=True,
-        key="matrix_editor"
+        key="matrix_editor",
+        disabled=['SN', 'CCC Output', 'Result Statement', 'Indicator', 'Unit']
     )
 
     if st.button("Apply & Update Dashboard Visuals", type="primary"):
