@@ -188,6 +188,9 @@ def load_base_data(workbook_mtime):
             rows = []
             current_output = 'General'
             current_indicator = ''
+            current_target = 0
+            output_headers = {}
+
             for idx, row in raw.iterrows():
                 cells = [value for value in row.tolist() if pd.notna(value)]
                 if not cells or idx < 6:
@@ -204,20 +207,39 @@ def load_base_data(workbook_mtime):
                         if isinstance(value, str) and any(keyword in value.lower() for keyword in ['cluster', 'people', 'water', 'sanitation', 'children', 'hygiene', 'community', 'feedback', 'women', 'school'])
                     ]
                     current_indicator = indicator_candidates[0] if indicator_candidates else current_output
+                    current_target = next((to_number(value) for value in reversed(cells) if to_number(value) is not None), 0)
+                    output_headers[current_output] = {
+                        'Indicator': current_indicator,
+                        'Target': float(current_target) if current_target is not None else 0,
+                    }
                     continue
 
                 if not first.isdigit() and not first.startswith('CCC W'):
                     activity_name = first
                     unit = str(cells[1]).strip() if len(cells) > 1 else ''
-                    target = next((to_number(value) for value in reversed(cells) if to_number(value) is not None), 0)
+                    numeric_values = [to_number(value) for value in cells]
+                    numeric_values = [v for v in numeric_values if v is not None]
+                    target = numeric_values[-1] if numeric_values else output_headers.get(current_output, {}).get('Target', 0)
                     rows.append({
                         'Result_Area': current_output,
-                        'Indicator': current_indicator,
+                        'Indicator': output_headers.get(current_output, {}).get('Indicator', current_indicator),
                         'Activity': activity_name,
                         'Unit': unit,
                         'Target': float(target) if target is not None else 0,
                         'Progress': 0,
                         'key': f"{current_output}|{activity_name}"
+                    })
+
+            for output_name, meta in output_headers.items():
+                if not any(row['Result_Area'] == output_name and row['Target'] > 0 for row in rows):
+                    rows.append({
+                        'Result_Area': output_name,
+                        'Indicator': meta['Indicator'],
+                        'Activity': meta['Indicator'],
+                        'Unit': '',
+                        'Target': float(meta['Target']) if meta['Target'] is not None else 0,
+                        'Progress': 0,
+                        'key': f"{output_name}|header"
                     })
 
             if rows:
