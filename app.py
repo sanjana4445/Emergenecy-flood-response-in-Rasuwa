@@ -13,7 +13,7 @@ except ImportError:
 
 # Set page configuration with a modern, wide layout
 st.set_page_config(
-    page_title="Rasuwa WASH Emergency Response Dashboard",
+    page_title="Providing safe WASH facilities & assistance to flood affected population",
     page_icon="💧",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -152,44 +152,92 @@ def load_base_data(workbook_mtime):
     file_path = Path(__file__).with_name("Chaya_Monitoring Matrix.xlsx")
     try:
         xls = pd.ExcelFile(file_path)
-        def read_response_sheet(sheet_name, weekly=False):
-            data = pd.read_excel(xls, sheet_name=sheet_name, skiprows=1)
-            data = data.dropna(how='all').dropna(how='all', axis=1)
-            if weekly:
-                # Weekly workbook columns contain an extra activity description.
-                names = [
-                    "SN", "Agency", "Province", "District", "Municipality", "Ward",
-                    "Result_Statement", "Indicator", "Activities", "Unit", "Target",
-                    "Progress", "Notes"
-                ]
-            else:
-                names = [
-                    "SN", "Agency", "Province", "District", "Municipality", "Ward",
-                    "Result_Statement", "Indicator", "Unit", "Target", "Progress", "Activities"
-                ]
-            if len(data.columns) != len(names):
-                raise ValueError(f"{sheet_name} has {len(data.columns)} usable columns; expected {len(names)}")
-            data.columns = names
-            return data[
-                data['Indicator'].notnull()
-                & (data['Indicator'] != 'Performance indicator/s')
-            ].copy()
 
-        df_d = read_response_sheet("WASH Response_Daily_Chaya")
-        df_w = read_response_sheet("WASH Response_Weekly_Chaya", weekly=True)
-        df_d['Result_Area'] = df_d['Result_Statement'].ffill().apply(
-            lambda x: x.split('\n')[0] if pd.notnull(x) else "General"
-        )
-        df_d['Target'] = pd.to_numeric(df_d['Target'], errors='coerce').fillna(0)
-        df_d['Progress'] = pd.to_numeric(df_d['Progress'], errors='coerce').fillna(0)
-        df_w['Target'] = pd.to_numeric(df_w['Target'], errors='coerce').fillna(0)
-        df_w['Progress'] = pd.to_numeric(df_w['Progress'], errors='coerce').fillna(0)
-        weekly = df_w[['Indicator', 'Target', 'Progress']].rename(columns={
+        def to_number(value):
+            if pd.isna(value):
+                return None
+            if isinstance(value, (int, float)):
+                return float(value)
+            text = str(value).strip()
+            if text == '':
+                return None
+            try:
+                return float(text.replace(',', '').replace('%', ''))
+            except ValueError:
+                return None
+
+        def normalize_result_area(value):
+            if pd.isna(value):
+                return "General"
+            text = str(value).strip()
+            for match, label in {
+                "CCC W1": "W1: Lead & Coordination",
+                "CCC W2": "W2: Water Supply",
+                "CCC W2.": "W2: Water Supply",
+                "CCC W3": "W3: Sanitation",
+                "CCC W4": "W4: WASH in Schools & Health Facilities",
+                "CCC W5": "W5: Hygiene Promotion & Community Engagement",
+                "CCC W6": "W5: Hygiene Promotion & Community Engagement",
+            }.items():
+                if text.startswith(match):
+                    return label
+            return text.split('\n')[0]
+
+        def parse_activity_rows(sheet_name):
+            raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+            rows = []
+            current_output = 'General'
+            current_indicator = ''
+            for idx, row in raw.iterrows():
+                cells = [value for value in row.tolist() if pd.notna(value)]
+                if not cells or idx < 6:
+                    continue
+
+                first = str(cells[0]).strip()
+                if first.startswith('TOTAL') or first.startswith('Follow') or first.startswith('Data to be filled manually') or first.startswith('Formulae'):
+                    continue
+
+                if any('CCC W' in str(value) for value in cells):
+                    current_output = normalize_result_area(next(value for value in cells if 'CCC W' in str(value)))
+                    indicator_candidates = [
+                        str(value).strip() for value in cells
+                        if isinstance(value, str) and any(keyword in value.lower() for keyword in ['cluster', 'people', 'water', 'sanitation', 'children', 'hygiene', 'community', 'feedback', 'women', 'school'])
+                    ]
+                    current_indicator = indicator_candidates[0] if indicator_candidates else current_output
+                    continue
+
+                if not first.isdigit() and not first.startswith('CCC W'):
+                    activity_name = first
+                    unit = str(cells[1]).strip() if len(cells) > 1 else ''
+                    target = next((to_number(value) for value in reversed(cells) if to_number(value) is not None), 0)
+                    rows.append({
+                        'Result_Area': current_output,
+                        'Indicator': current_indicator,
+                        'Activity': activity_name,
+                        'Unit': unit,
+                        'Target': float(target) if target is not None else 0,
+                        'Progress': 0,
+                        'key': f"{current_output}|{activity_name}"
+                    })
+
+            if rows:
+                frame = pd.DataFrame(rows)
+                frame['Result_Statement'] = frame['Result_Area']
+                frame['SN'] = range(1, len(frame) + 1)
+                return frame
+            return pd.DataFrame(columns=['Result_Area','Indicator','Activity','Unit','Target','Progress','Result_Statement','SN','key'])
+
+        df_d = parse_activity_rows("WASH Response_Daily_Chaya")
+        df_w = parse_activity_rows("WASH Response_Weekly_Chaya")
+
+        weekly = df_w[['key', 'Target', 'Progress']].rename(columns={
             'Target': 'Weekly Target', 'Progress': 'Weekly Progress'
         })
-        return df_d.merge(weekly, on='Indicator', how='left').fillna({
+        merged = df_d.merge(weekly, on='key', how='left').fillna({
             'Weekly Target': 0, 'Weekly Progress': 0
         })
+        merged['Activities'] = merged['Activity'].fillna('')
+        return merged.drop(columns=['key'])
     except Exception as e:
         st.error(f"Error loading Excel file: {e}")
         return pd.DataFrame()
@@ -200,11 +248,11 @@ st_autorefresh(interval=30_000, key="excel_workbook_refresh")
 raw_df = load_base_data(workbook_mtime)
 
 OUTPUT_ORDER = [
-    next(
-        (value for value in raw_df['Result_Area'].dropna().unique() if value.startswith(f'CCC W{number}')),
-        f'CCC W{number}: No data recorded'
-    )
-    for number in range(1, 7)
+    "W1: Lead & Coordination",
+    "W2: Water Supply",
+    "W3: Sanitation",
+    "W4: WASH in Schools & Health Facilities",
+    "W5: Hygiene Promotion & Community Engagement",
 ]
 
 def summarize_outputs(frame, value_columns):
@@ -227,7 +275,7 @@ def output_interpretation(summary, achieved_column='Progress', target_column='Ta
     )
 
 # Initialize the data once; future changes come only from the Data editor.
-DATA_MATRIX_VERSION = 7
+DATA_MATRIX_VERSION = 8
 data_needs_refresh = (
     st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION
     or st.session_state.get('data_matrix_source_mtime') != workbook_mtime
@@ -250,7 +298,7 @@ if data_needs_refresh and not raw_df.empty:
 st.markdown(f"""
 <div class="hero">
   <div class="hero-top">
-    <div class="hero-brand"><div class="hero-mark">💧</div><div><h1>Rasuwa Flood Response</h1><p>WASH monitoring dashboard</p></div></div>
+    <div class="hero-brand"><div class="hero-mark">💧</div><div><h1>Providing safe WASH facilities &amp; assistance to flood affected population</h1><p>WASH monitoring dashboard</p></div></div>
     <div class="export-label">⇩ &nbsp; Export CSV</div>
   </div>
     <div class="hero-meta"><span class="hero-pill">⌖ &nbsp;Rasuwa District, Bagmati Province</span><span class="hero-pill">Agency: UNICEF</span><span class="hero-pill">◷ &nbsp;Last update: {datetime.fromtimestamp(workbook_mtime / 1_000_000_000).strftime('%d %B %Y, %I:%M %p')}</span></div>
