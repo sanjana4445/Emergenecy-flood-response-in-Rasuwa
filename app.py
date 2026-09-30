@@ -571,49 +571,85 @@ with tab_exec:
 # TAB 2: SUB-ACTIVITY LOG
 # =========================================================
 with tab_activity_log:
-    st.subheader("Output Activity Log")
-    st.caption("Record completed work under an output and visualize the people reached by each sub-activity.")
+    st.subheader("Record an activity")
+    st.caption("Create one entry for one completed activity in one ward. For example: repaired taps in Kalika, Ward 2.")
 
     selected_log_output = st.selectbox(
-        "Output",
+        "Output / result area",
         OUTPUT_ORDER,
-        key="activity_log_output"
+        key="activity_log_output",
+        help="Choose the result area this activity supports."
     )
     activity_records = load_activity_log()
 
     with st.form("add_output_activity", clear_on_submit=True):
+        st.markdown("#### What was done and where?")
         subactivity = st.text_input(
-            "Sub-activity",
-            placeholder="For example: Installed household taps"
+            "Activity / intervention",
+            placeholder="For example: Repaired household taps",
+            help="Describe the work completed, not the result total."
         )
         location_col, ward_col = st.columns(2)
         with location_col:
-            activity_palika = st.text_input("Palika", placeholder="Enter palika name")
+            activity_palika = st.text_input(
+                "Palika",
+                placeholder="For example: Kalika",
+                help="Use the same spelling each time so entries group together."
+            )
         with ward_col:
-            activity_ward = st.text_input("Ward", placeholder="Enter ward number")
+            activity_ward = st.text_input("Ward number", placeholder="For example: 2")
+
+        st.markdown("#### Quantity and people reached")
         quantity_col, unit_col = st.columns(2)
         with quantity_col:
-            delivered_quantity = st.number_input("Quantity delivered", min_value=0, step=1)
+            delivered_quantity = st.number_input(
+                "Items or events delivered",
+                min_value=0,
+                value=None,
+                step=1,
+                help="Count items or events, such as 12 taps or 1 training. This is not a people count."
+            )
         with unit_col:
-            quantity_unit = st.text_input("Unit", placeholder="taps, tanks, kits")
+            quantity_unit = st.text_input("Unit", placeholder="For example: taps, kits, trainings")
         people_col, notes_col = st.columns(2)
         with people_col:
-            people_benefited = st.number_input("People benefited", min_value=0, step=1)
+            people_benefited = st.number_input(
+                "People reached",
+                min_value=0,
+                value=None,
+                step=1,
+                help="Enter the number of people reached by this activity, if known. Leave blank if it was not recorded."
+            )
         with notes_col:
-            activity_notes = st.text_input("Location or notes", placeholder="Ward, site, or brief note")
-        st.markdown("**People reached (leave blank if not reported)**")
-        demographic_columns = st.columns(4)
-        demographic_inputs = {}
-        for index, demographic in enumerate(DEMOGRAPHIC_COLUMNS):
-            with demographic_columns[index % len(demographic_columns)]:
-                demographic_inputs[demographic] = st.number_input(
-                    demographic,
-                    min_value=0,
-                    value=None,
-                    step=1,
-                    key=f"activity_{demographic.lower()}"
-                )
-        add_activity = st.form_submit_button("Add sub-activity")
+            activity_notes = st.text_input(
+                "Site or notes (optional)",
+                placeholder="For example: Thulo Gaun health post"
+            )
+
+        with st.expander("Optional: demographic breakdown", expanded=False):
+            st.caption("Enter counts from your source records. Leave unknown counts blank. Record categories as defined by your reporting form; some groups may overlap.")
+            demographic_labels = {
+                'Households': 'Households reached',
+                'Male': 'Male people',
+                'Female': 'Female people',
+                'Children': 'Children (total)',
+                'Boys': 'Boys',
+                'Girls': 'Girls',
+                'PWD': 'People with disabilities',
+            }
+            demographic_inputs = {}
+            demographic_columns = st.columns(2)
+            for index, demographic in enumerate(DEMOGRAPHIC_COLUMNS):
+                with demographic_columns[index % len(demographic_columns)]:
+                    demographic_inputs[demographic] = st.number_input(
+                        demographic_labels[demographic],
+                        min_value=0,
+                        value=None,
+                        step=1,
+                        key=f"activity_{demographic.lower()}"
+                    )
+
+        add_activity = st.form_submit_button("Save activity", type="primary")
 
     if add_activity:
         if not subactivity.strip() or not activity_palika.strip() or not activity_ward.strip():
@@ -625,9 +661,9 @@ with tab_activity_log:
                 "Sub-activity": subactivity.strip(),
                 "Palika": activity_palika.strip(),
                 "Ward": activity_ward.strip(),
-                "Quantity": int(delivered_quantity),
+                "Quantity": int(delivered_quantity) if delivered_quantity is not None else None,
                 "Unit": quantity_unit.strip(),
-                "People benefited": int(people_benefited),
+                "People benefited": int(people_benefited) if people_benefited is not None else None,
                 "Location / notes": activity_notes.strip(),
                 "Recorded": datetime.now().strftime('%Y-%m-%d %H:%M'),
             }
@@ -649,37 +685,46 @@ with tab_activity_log:
     ]
     if output_records:
         record_frame = pd.DataFrame([record for _, record in output_records])
-        for column in ['Palika', 'Ward'] + DEMOGRAPHIC_COLUMNS:
+        for column in [
+            'Recorded', 'Palika', 'Ward', 'Sub-activity', 'Quantity', 'Unit',
+            'People benefited', 'Location / notes', *DEMOGRAPHIC_COLUMNS
+        ]:
             if column not in record_frame:
                 record_frame[column] = pd.NA
         for column in DEMOGRAPHIC_COLUMNS:
             record_frame[column] = pd.to_numeric(record_frame[column], errors='coerce')
-        total_people = int(pd.to_numeric(record_frame['People benefited'], errors='coerce').fillna(0).sum())
+        record_frame['People benefited'] = pd.to_numeric(record_frame['People benefited'], errors='coerce')
+        total_people = record_frame['People benefited'].sum(min_count=1)
         metric_columns = st.columns(2)
         metric_columns[0].metric("Sub-activities recorded", len(record_frame))
-        metric_columns[1].metric("People benefited", f"{total_people:,}")
+        metric_columns[1].metric(
+            "People reached",
+            "Not reported" if pd.isna(total_people) else f"{total_people:,.0f}"
+        )
 
-        st.markdown("#### People benefited by sub-activity")
+        st.markdown("#### People reached by activity")
         chart_data = (
-            record_frame.groupby('Sub-activity', as_index=False)['People benefited']
-            .sum()
+            record_frame.groupby('Sub-activity')['People benefited']
+            .sum(min_count=1)
+            .reset_index()
             .sort_values('People benefited', ascending=False)
         )
-        chart_data = chart_data[chart_data['People benefited'] > 0]
+        chart_data = chart_data[chart_data['People benefited'].fillna(0) > 0]
         if chart_data.empty:
-            st.info("Add a people-benefited value above zero to build the chart.")
+            st.info("Enter a people-reached count to show this chart.")
         else:
             figure = px.pie(
                 chart_data,
                 values='People benefited',
                 names='Sub-activity',
                 hole=0.45,
-                title=f"Beneficiaries across {selected_log_output} sub-activities"
+                title=f"People reached across {selected_log_output} activities"
             )
             figure.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(apply_chart_theme(figure), width="stretch")
 
         st.markdown("#### Recorded sub-activities")
+        st.caption("Each row is one activity entry. Blank counts mean they were not reported; the activity quantity is separate from the people-reached count.")
         st.dataframe(
             record_frame[[
                 'Recorded', 'Palika', 'Ward', 'Sub-activity', 'Quantity', 'Unit',
@@ -719,7 +764,9 @@ with tab_activity_log:
             remove_options,
             format_func=lambda index: (
                 f"{activity_records[index]['Sub-activity']} "
-                f"({activity_records[index]['People benefited']:,} people)"
+                f"({int(activity_records[index]['People benefited']):,} people)"
+                if pd.notna(activity_records[index].get('People benefited'))
+                else f"{activity_records[index]['Sub-activity']} (people not reported)"
             ),
             key="activity_log_remove"
         )
