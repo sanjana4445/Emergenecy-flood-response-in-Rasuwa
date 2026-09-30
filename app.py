@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 from datetime import datetime
+from html import escape
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -67,6 +68,9 @@ st.markdown("""
     .output-status { font-size: 14px; font-weight: 800; margin-top: 6px; }
     .output-met { color: #20965a; }
     .output-pending { color: #d97706; }
+    .activity-item { border-top: 1px solid #edf1f0; padding: 10px 0; }
+    .activity-name { color: var(--teal); font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+    .activity-description { color: #687673; font-size: 12px; line-height: 1.35; margin-top: 4px; overflow-wrap: anywhere; }
     .metric-title {
         font-size: 14px;
         font-weight: 600;
@@ -187,64 +191,39 @@ def load_base_data(workbook_mtime):
             raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
             rows = []
             current_output = 'General'
-            current_indicator = ''
-            current_target = 0
-            output_headers = {}
+            current_result_statement = 'General'
 
-            for idx, row in raw.iterrows():
-                cells = [value for value in row.tolist() if pd.notna(value)]
-                if not cells or idx < 6:
+            for row_index, row in raw.iterrows():
+                if row_index < 7 or row.iloc[0:13].isna().all():
                     continue
 
-                first = str(cells[0]).strip()
-                if first.startswith('TOTAL') or first.startswith('Follow') or first.startswith('Data to be filled manually') or first.startswith('Formulae'):
+                result_value = row.iloc[7] if len(row) > 7 else None
+                if pd.notna(result_value) and 'CCC W' in str(result_value):
+                    current_output = normalize_result_area(result_value)
+                    current_result_statement = str(result_value).strip().replace('CCC W6', 'CCC W5', 1)
+
+                indicator = row.iloc[8] if len(row) > 8 else None
+                if pd.isna(indicator) or not str(indicator).strip():
                     continue
 
-                if any('CCC W' in str(value) for value in cells):
-                    current_output = normalize_result_area(next(value for value in cells if 'CCC W' in str(value)))
-                    indicator_candidates = [
-                        str(value).strip() for value in cells
-                        if isinstance(value, str) and any(keyword in value.lower() for keyword in ['cluster', 'people', 'water', 'sanitation', 'children', 'hygiene', 'community', 'feedback', 'women', 'school'])
-                    ]
-                    current_indicator = indicator_candidates[0] if indicator_candidates else current_output
-                    current_target = next((to_number(value) for value in reversed(cells) if to_number(value) is not None), 0)
-                    output_headers[current_output] = {
-                        'Indicator': current_indicator,
-                        'Target': float(current_target) if current_target is not None else 0,
-                    }
-                    continue
-
-                if not first.isdigit() and not first.startswith('CCC W'):
-                    activity_name = first
-                    unit = str(cells[1]).strip() if len(cells) > 1 else ''
-                    numeric_values = [to_number(value) for value in cells]
-                    numeric_values = [v for v in numeric_values if v is not None]
-                    target = numeric_values[-1] if numeric_values else output_headers.get(current_output, {}).get('Target', 0)
-                    rows.append({
-                        'Result_Area': current_output,
-                        'Indicator': output_headers.get(current_output, {}).get('Indicator', current_indicator),
-                        'Activity': activity_name,
-                        'Unit': unit,
-                        'Target': float(target) if target is not None else 0,
-                        'Progress': 0,
-                        'key': f"{current_output}|{activity_name}"
-                    })
-
-            for output_name, meta in output_headers.items():
-                if not any(row['Result_Area'] == output_name and row['Target'] > 0 for row in rows):
-                    rows.append({
-                        'Result_Area': output_name,
-                        'Indicator': meta['Indicator'],
-                        'Activity': meta['Indicator'],
-                        'Unit': '',
-                        'Target': float(meta['Target']) if meta['Target'] is not None else 0,
-                        'Progress': 0,
-                        'key': f"{output_name}|header"
-                    })
+                unit = row.iloc[9] if len(row) > 9 and pd.notna(row.iloc[9]) else ''
+                target = to_number(row.iloc[10]) if len(row) > 10 else None
+                progress = to_number(row.iloc[11]) if len(row) > 11 else None
+                activity = row.iloc[12] if len(row) > 12 and pd.notna(row.iloc[12]) else ''
+                indicator = str(indicator).strip()
+                rows.append({
+                    'Result_Area': current_output,
+                    'Result_Statement': current_result_statement,
+                    'Indicator': indicator,
+                    'Activity': str(activity).strip(),
+                    'Unit': str(unit).strip(),
+                    'Target': float(target) if target is not None else 0,
+                    'Progress': float(progress) if progress is not None else 0,
+                    'key': f"{current_output}|{indicator}"
+                })
 
             if rows:
                 frame = pd.DataFrame(rows)
-                frame['Result_Statement'] = frame['Result_Area']
                 frame['SN'] = range(1, len(frame) + 1)
                 return frame
             return pd.DataFrame(columns=['Result_Area','Indicator','Activity','Unit','Target','Progress','Result_Statement','SN','key'])
@@ -297,7 +276,7 @@ def output_interpretation(summary, achieved_column='Progress', target_column='Ta
     )
 
 # Initialize the data once; future changes come only from the Data editor.
-DATA_MATRIX_VERSION = 8
+DATA_MATRIX_VERSION = 9
 data_needs_refresh = (
     st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION
     or st.session_state.get('data_matrix_source_mtime') != workbook_mtime
@@ -339,24 +318,35 @@ df_active = st.session_state.data_matrix[
 
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
-output_summary = summarize_outputs(df_active, ['Target', 'Progress'])
 st.markdown("#### Output-wise daily performance", unsafe_allow_html=True)
-st.caption("Each card is calculated from the Excel daily sheet. Met target means achieved progress is at least the output target.")
-output_cards = output_summary.reset_index()
+st.caption("Each activity shows its Excel target, achieved progress, and completion percentage.")
 card_columns = st.columns(3, gap="medium")
-for card_index, output_row in output_cards.iterrows():
-    target = output_row['Target']
-    achieved = output_row['Progress']
-    progress_pct = achieved / target * 100 if target else 0
-    status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
+for card_index, output_name in enumerate(OUTPUT_ORDER):
+    output_activities = df_active[df_active['CCC Output'] == output_name]
+    activity_markup = []
+    for _, activity_row in output_activities.iterrows():
+        target = float(activity_row['Target'])
+        achieved = float(activity_row['Progress'])
+        progress_pct = achieved / target * 100 if target else 0
+        status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
+        indicator = escape(str(activity_row['Indicator']))
+        activity = str(activity_row['Activity']).strip()
+        description = f'<div class="activity-description">{escape(activity)}</div>' if activity else ''
+        activity_markup.append(f"""
+            <div class="activity-item">
+                <div class="activity-name">{indicator}</div>
+                {description}
+                <div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>
+                <div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>
+                <div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>
+                <div class="output-status {'output-met' if status == 'Met target' else 'output-pending'}">{status}</div>
+            </div>
+        """)
     with card_columns[card_index % 3]:
         st.markdown(f"""
         <div class="metric-card output-card">
-            <div class="metric-title">{output_row['CCC Output']}</div>
-            <div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>
-            <div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>
-            <div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>
-            <div class="output-status {'output-met' if status == 'Met target' else 'output-pending'}">{status}</div>
+            <div class="metric-title">{escape(output_name)}</div>
+            {''.join(activity_markup)}
         </div>
         """, unsafe_allow_html=True)
 
@@ -671,3 +661,4 @@ with tab_editor:
         file_name="Rasuwa_WASH_Updated_Monitoring_Matrix.csv",
         mime="text/csv"
     )
+
