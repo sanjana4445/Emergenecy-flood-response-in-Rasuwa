@@ -97,6 +97,24 @@ st.markdown("""
     .output-progress-fill {
         height: 100%; border-radius: inherit; background: linear-gradient(90deg, #86efac 0%, #22c55e 45%, #15803d 100%);
     }
+    .output-activity-list {
+        margin-top: 12px; display: grid; gap: 10px;
+    }
+    .output-activity-item {
+        background: #f8faf9; border: 1px solid #e7efe9; border-radius: 12px; padding: 10px 12px;
+    }
+    .output-activity-head {
+        display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; font-weight: 700; color: #173b3d; margin-bottom: 8px;
+    }
+    .output-activity-name {
+        flex: 1; overflow-wrap: anywhere;
+    }
+    .output-activity-metrics {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; font-size: 12px; color: #52635f;
+    }
+    .output-activity-metrics strong {
+        color: #0f172a; font-size: 14px; display: block; margin-top: 2px;
+    }
     .activity-item { border-top: 1px solid #edf1f0; padding: 10px 0; }
     .activity-name { color: var(--teal); font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
     .activity-description { color: #687673; font-size: 12px; line-height: 1.35; margin-top: 4px; overflow-wrap: anywhere; }
@@ -138,6 +156,13 @@ st.markdown("""
     }
     [data-testid="stCaptionContainer"] p { font-size: 15px; color: #52635f; }
     [data-testid="stDataFrame"] { font-size: 15px; }
+    [data-testid="stWidgetLabel"] p, [data-testid="stWidgetLabel"] label {
+        color: #243331 !important; font-weight: 650 !important;
+    }
+    [data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea,
+    [data-testid="stNumberInput"] input, [data-baseweb="select"] > div {
+        background-color: #ffffff !important; color: #243331 !important;
+    }
     .priority-table {
         background: #fff7ed;
         border-left: 4px solid #f97316;
@@ -292,7 +317,28 @@ OUTPUT_ORDER = [
 ]
 
 ACTIVITY_LOG_PATH = Path(__file__).with_name("wash_activity_log.json")
-DEMOGRAPHIC_COLUMNS = ['Households', 'Male', 'Female', 'Children', 'Boys', 'Girls', 'PWD']
+DEMOGRAPHIC_COLUMNS = [
+    'Households', 'Male', 'Female', 'Children', 'Boys', 'Girls',
+    'Under 5', '6-9', '10-19', 'Pregnant', 'Postpartum', 'PWD',
+    'PWD Female', 'PWD Male', '60+'
+]
+DEMOGRAPHIC_LABELS = {
+    'Households': 'Households reached',
+    'Male': 'Male',
+    'Female': 'Female',
+    'Children': 'Children under 18 (total)',
+    'Boys': 'Boys under 18',
+    'Girls': 'Girls under 18',
+    'Under 5': 'Children under 5',
+    '6-9': 'Children aged 6-9',
+    '10-19': 'People aged 10-19',
+    'Pregnant': 'Pregnant women',
+    'Postpartum': 'Postpartum women',
+    'PWD': 'People with disabilities',
+    'PWD Female': 'Female people with disabilities',
+    'PWD Male': 'Male people with disabilities',
+    '60+': 'People aged 60 or older',
+}
 
 def load_activity_log():
     if not ACTIVITY_LOG_PATH.exists():
@@ -305,6 +351,24 @@ def load_activity_log():
 
 def save_activity_log(records):
     ACTIVITY_LOG_PATH.write_text(json.dumps(records, indent=2), encoding='utf-8')
+
+def render_demographic_inputs(record=None, key_prefix='activity_demographics'):
+    record = record or {}
+    st.caption("Enter counts from your report. Leave a count at 0 if it was not reported; some categories may overlap.")
+    demographic_inputs = {}
+    demographic_columns = st.columns(3)
+    for index, (field, label) in enumerate(DEMOGRAPHIC_LABELS.items()):
+        value = pd.to_numeric(record.get(field), errors='coerce')
+        default_value = 0 if pd.isna(value) else max(0, int(value))
+        with demographic_columns[index % len(demographic_columns)]:
+            demographic_inputs[field] = st.number_input(
+                label,
+                min_value=0,
+                value=default_value,
+                step=1,
+                key=f"{key_prefix}_{field.lower().replace(' ', '_').replace('+', 'plus').replace('-', '_')}"
+            )
+    return demographic_inputs
 
 def summarize_outputs(frame, value_columns):
     return frame.groupby('CCC Output')[value_columns].sum().reindex(OUTPUT_ORDER, fill_value=0)
@@ -369,17 +433,43 @@ df_active = st.session_state.data_matrix[
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
 st.markdown("#### Output-based target and progress", unsafe_allow_html=True)
-st.caption("Each output is summarized by the total target and total achievement across its linked activities.")
+st.caption("Each output shows its activity-wise targets and progress within the same section.")
 for row_start in range(0, len(OUTPUT_ORDER), 2):
     card_columns = st.columns(2, gap="medium")
     for column_index, output_name in enumerate(OUTPUT_ORDER[row_start:row_start + 2]):
-        output_activities = df_active[df_active['CCC Output'] == output_name]
+        output_activities = df_active[df_active['CCC Output'] == output_name].copy()
         total_target = float(output_activities['Target'].sum()) if not output_activities.empty else 0
         total_progress = float(output_activities['Progress'].sum()) if not output_activities.empty else 0
         progress_pct = (total_progress / total_target * 100) if total_target else 0
         is_met = total_target > 0 and total_progress >= total_target
         status_text = 'Target achieved' if is_met else ('No target recorded' if total_target == 0 else 'Target not met')
         status_class = 'met' if is_met else ''
+        activity_rows_html = []
+        if output_activities.empty:
+            activity_rows_html.append('<div class="output-activity-item"><div class="output-activity-head"><span class="output-activity-name">No activity data</span></div></div>')
+        else:
+            for _, activity_row in output_activities.iterrows():
+                activity_name = str(activity_row['Indicator']) if str(activity_row['Indicator']).strip() else str(activity_row['Activity']).strip()
+                activity_target = float(activity_row['Target'])
+                activity_progress = float(activity_row['Progress'])
+                activity_pct = (activity_progress / activity_target * 100) if activity_target else 0
+                activity_status = 'Met' if activity_target > 0 and activity_progress >= activity_target else ('No target' if activity_target == 0 else 'Not met')
+                activity_rows_html.append(
+                    f'''
+                    <div class="output-activity-item">
+                        <div class="output-activity-head">
+                            <span class="output-activity-name">{escape(activity_name)}</span>
+                            <span class="output-activity-status">{activity_status}</span>
+                        </div>
+                        <div class="output-activity-metrics">
+                            <div>Target<strong>{activity_target:,.0f}</strong></div>
+                            <div>Progress<strong>{activity_progress:,.0f}</strong></div>
+                            <div>Achievement<strong>{activity_pct:.1f}%</strong></div>
+                            <div>Result<strong>{'Done' if activity_status == 'Met' else 'Pending'}</strong></div>
+                        </div>
+                    </div>
+                    '''
+                )
         with card_columns[column_index]:
             st.markdown(f'''
                 <div class="output-summary-card">
@@ -389,14 +479,15 @@ for row_start in range(0, len(OUTPUT_ORDER), 2):
                     <div class="output-summary-row"><span class="label">Achievement</span><strong>{progress_pct:.1f}%</strong></div>
                     <div class="output-progress-bar"><div class="output-progress-fill" style="width: {min(100, max(0, progress_pct))}%"></div></div>
                     <div class="output-summary-status {status_class}">{status_text}</div>
+                    <div class="output-activity-list">{''.join(activity_rows_html)}</div>
                 </div>
             ''', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
 # ---------------------------------------------------------
-tab_exec, tab_activity_log, tab_palika, tab_output, tab_timelapse, tab_monitoring, tab_editor = st.tabs([
-    "Overview", "Activity Log", "Activities", "Daily Log", "Trends", "Monitoring", "Data editor"
+tab_exec, tab_activity_log, tab_palika, tab_output, tab_monitoring, tab_editor = st.tabs([
+    "Overview", "Activity Log", "Activities", "Trends", "Monitoring", "Data editor"
 ])
 
 # =========================================================
@@ -458,13 +549,13 @@ with tab_exec:
         st.info("Record an activity in the Activity Log to see palika, ward, intervention, and demographic summaries here.")
     else:
         dashboard_columns = [
-            'Output', 'Palika', 'Ward', 'Sub-activity', 'People benefited',
+            'Output', 'Output activity', 'Palika', 'Ward', 'Sub-activity', 'People benefited',
             'Households', 'Male', 'Female', 'Children', 'Boys', 'Girls', 'PWD'
         ]
         for column in dashboard_columns:
             if column not in dashboard_records:
                 dashboard_records[column] = pd.NA
-        for column in ['Output', 'Palika', 'Ward', 'Sub-activity']:
+        for column in ['Output', 'Output activity', 'Palika', 'Ward', 'Sub-activity']:
             dashboard_records[column] = (
                 dashboard_records[column].fillna('Not recorded').astype(str).str.strip()
                 .replace('', 'Not recorded')
@@ -475,7 +566,7 @@ with tab_exec:
         for column in dashboard_numeric_columns:
             dashboard_records[column] = pd.to_numeric(dashboard_records[column], errors='coerce')
 
-        output_filter_col, palika_filter_col, ward_filter_col, activity_filter_col = st.columns(4)
+        output_filter_col, output_activity_filter_col, palika_filter_col, ward_filter_col, activity_filter_col = st.columns(5)
         output_options = ['All outputs'] + sorted(dashboard_records['Output'].unique().tolist())
         with output_filter_col:
             dashboard_output = st.selectbox('Output', output_options, key='overview_activity_output')
@@ -483,11 +574,20 @@ with tab_exec:
             dashboard_records['Output'] == dashboard_output
         ]
 
-        palika_options = ['All palikas'] + sorted(output_scope['Palika'].unique().tolist())
+        output_activity_options = ['All output activities'] + sorted(output_scope['Output activity'].unique().tolist())
+        with output_activity_filter_col:
+            dashboard_output_activity = st.selectbox(
+                'Output activity', output_activity_options, key='overview_activity_indicator'
+            )
+        output_activity_scope = output_scope if dashboard_output_activity == 'All output activities' else output_scope[
+            output_scope['Output activity'] == dashboard_output_activity
+        ]
+
+        palika_options = ['All palikas'] + sorted(output_activity_scope['Palika'].unique().tolist())
         with palika_filter_col:
             dashboard_palika = st.selectbox('Palika', palika_options, key='overview_activity_palika')
-        palika_scope = output_scope if dashboard_palika == 'All palikas' else output_scope[
-            output_scope['Palika'] == dashboard_palika
+        palika_scope = output_activity_scope if dashboard_palika == 'All palikas' else output_activity_scope[
+            output_activity_scope['Palika'] == dashboard_palika
         ]
 
         ward_options = ['All wards'] + sorted(palika_scope['Ward'].unique().tolist())
@@ -603,64 +703,124 @@ with tab_activity_log:
         "Holding Centers": 0,
         "Child-Friendly Spaces": 0,
         "Material Distribution": 0,
+        "Other Intervention": 0,
     }
     for record in activity_records:
         category = record.get("Category")
         if category in category_summary:
             category_summary[category] += 1
 
-    summary_cols = st.columns(4)
+    summary_cols = st.columns(5)
     summary_cols[0].metric("Total entries", len(activity_records))
     summary_cols[1].metric("Schools", category_summary["Schools"])
     summary_cols[2].metric("Holding centers", category_summary["Holding Centers"])
     summary_cols[3].metric("Child-friendly spaces", category_summary["Child-Friendly Spaces"])
+    summary_cols[4].metric("Other interventions", category_summary["Other Intervention"])
 
     report_category = st.selectbox(
         "Entry type",
-        ["Schools", "Holding Centers", "Child-Friendly Spaces", "Material Distribution"],
+        ["Schools", "Holding Centers", "Child-Friendly Spaces", "Material Distribution", "Other Intervention"],
         key="report_entry_category",
         help="Choose the report section that matches the data you want to log."
     )
 
-    with st.form("report_entry_form", clear_on_submit=True):
-        site = st.text_input(
-            "Site / location",
-            placeholder="For example: Nildkantha Secondary School - Uttargaya-5",
-            help="Enter the exact site name as it appears in the report."
+    selected_output = st.selectbox("Output", OUTPUT_ORDER, key="activity_log_linked_output")
+    output_activity_rows = st.session_state.data_matrix[
+        st.session_state.data_matrix['CCC Output'] == selected_output
+    ]
+    output_activity_options = (
+        output_activity_rows['Indicator'].dropna().astype(str).str.strip().loc[lambda values: values.ne('')].drop_duplicates().tolist()
+    )
+    output_activity_options.append("Other activity (specify)")
+    selected_output_activity = st.selectbox(
+        "Output activity / indicator",
+        output_activity_options,
+        key="activity_log_linked_indicator",
+        help="Choose an activity indicator from the selected output to link this sub-activity to it."
+    )
+    if selected_output_activity == "Other activity (specify)":
+        linked_output_activity = st.text_input(
+            "Specify output activity",
+            placeholder="Enter an activity that belongs to this output",
+            key="activity_log_custom_indicator"
         )
+    else:
+        linked_output_activity = selected_output_activity
+
+    with st.form("report_entry_form", clear_on_submit=True):
+        st.caption("Choose the type of work above, then enter where it happened, what was done, and the people reached. Counts can be left at 0 when not reported.")
+        site = st.text_input(
+            "Site / location (where was the work done?)",
+            placeholder="For example: Nildkantha Secondary School - Uttargaya-5",
+            help="Enter the school, health facility, holding center, community, or distribution location."
+        )
+        location_col, ward_col = st.columns(2)
+        with location_col:
+            activity_palika = st.text_input("Palika", placeholder="For example: Uttargaya RM")
+        with ward_col:
+            activity_ward = st.text_input("Ward number", placeholder="For example: 5")
 
         if report_category == "Material Distribution":
-            item = st.text_input("Item / material", placeholder="For example: Hygiene Kit")
-            quantity = st.number_input("Quantity distributed", min_value=0, value=0, step=1)
-            beneficiaries = st.number_input("Beneficiaries reached", min_value=0, value=0, step=1)
-            unit = st.text_input("Unit", placeholder="kits / packs / sets")
-            remarks = st.text_area("Remarks", placeholder="For example: Distributed to households in Dhunche and local responders.")
+            item = st.text_input("Item / material distributed", placeholder="For example: Hygiene Kit", help="Name the item that was distributed.")
+            quantity = st.number_input("Number of items distributed", min_value=0, value=0, step=1, help="Total number of items or kits given out.")
+            beneficiaries = st.number_input("People who benefited", min_value=0, value=0, step=1, help="Number of people reached, not the number of items.")
+            unit = st.text_input("Item unit", placeholder="For example: kits, buckets, blankets", help="What does the quantity count?")
+            remarks = st.text_area("Notes or missing information", placeholder="For example: Uttargaya update pending.")
+        elif report_category == "Other Intervention":
+            other_intervention = st.text_input(
+                "Intervention name (what type of work?)",
+                placeholder="For example: Water supply scheme, HCF repair, or hygiene promotion",
+                help="Use this to name an activity type not covered by Schools, Holding Centers, Child-Friendly Spaces, or Material Distribution."
+            )
+            activity = st.text_area(
+                "Sub-activity (what action was completed?)",
+                height=100,
+                placeholder="Describe the work completed, such as repairing a water supply scheme.",
+                help="Add the specific action carried out for this intervention."
+            )
+            beneficiaries = st.number_input("People who benefited", min_value=0, value=0, step=1, help="Number of people reached. Enter 0 if not yet reported.")
+            remarks = st.text_area("Notes or missing information", placeholder="For example: Beneficiary breakdown to be updated.")
         else:
             activity = st.text_area(
-                "Activity / intervention",
+                "Sub-activity (what action was completed?)",
                 height=120,
                 placeholder="For example: Full repair & maintenance of water storage reservoir tank",
                 help="Describe the activity clearly in the same way as your report table."
             )
-            beneficiaries = st.number_input("Beneficiaries / people reached", min_value=0, value=0, step=1)
-            male = st.number_input("Male", min_value=0, value=0, step=1)
-            female = st.number_input("Female", min_value=0, value=0, step=1)
-            remarks = st.text_area("Remarks", placeholder="For example: Segregated data yet to be updated.")
+            beneficiaries = st.number_input("People who benefited", min_value=0, value=0, step=1, help="Total number of people reached. Enter 0 if not yet reported.")
+            remarks = st.text_area("Notes or missing information", placeholder="For example: Segregated data yet to be updated.")
+
+        with st.expander("Demographic information (optional)", expanded=False):
+            demographic_inputs = render_demographic_inputs(key_prefix="new_activity_demographics")
 
         submit_entry = st.form_submit_button("Save entry", type="primary")
 
     if submit_entry:
         if not site.strip():
-            st.error("Please fill in the site or location before saving.")
+            st.error("Please enter the site or location before saving.")
+        elif not activity_palika.strip() or not activity_ward.strip():
+            st.error("Please enter both the palika and ward so this entry can be filtered by location.")
+        elif not linked_output_activity.strip():
+            st.error("Choose an output activity or enter a custom activity before saving.")
+        elif report_category == "Other Intervention" and not other_intervention.strip():
+            st.error("Please enter the name of the other intervention before saving.")
         else:
             record = {
                 "id": uuid4().hex,
                 "Category": report_category,
+                "Output": selected_output,
+                "Output activity": linked_output_activity.strip(),
+                "Sub-activity": item.strip() if report_category == "Material Distribution" and item.strip() else (
+                    activity.strip() if report_category != "Material Distribution" else "Material distribution"
+                ),
                 "Site": site.strip(),
+                "Palika": activity_palika.strip(),
+                "Ward": activity_ward.strip(),
                 "Recorded": datetime.now().strftime('%Y-%m-%d %H:%M'),
                 "Beneficiaries": int(beneficiaries),
                 "Remarks": remarks.strip(),
             }
+            record.update({field: int(value) for field, value in demographic_inputs.items()})
 
             if report_category == "Material Distribution":
                 record.update({
@@ -671,9 +831,13 @@ with tab_activity_log:
                 })
             else:
                 record.update({
-                    "Activity": activity.strip(),
-                    "Male": int(male),
-                    "Female": int(female),
+                    "Activity": (
+                        f"{other_intervention.strip()}: {activity.strip()}"
+                        if report_category == "Other Intervention" and activity.strip()
+                        else other_intervention.strip() if report_category == "Other Intervention"
+                        else activity.strip()
+                    ),
+                    "Intervention type": other_intervention.strip() if report_category == "Other Intervention" else "",
                 })
 
             activity_records.append(record)
@@ -684,18 +848,242 @@ with tab_activity_log:
             except OSError as error:
                 st.error(f"Could not save the entry: {error}")
 
-    filtered_records = [record for record in activity_records if record.get("Category") == report_category]
-    if filtered_records:
-        records_df = pd.DataFrame(filtered_records)
-        display_columns = ["Recorded", "Site", "Activity", "Beneficiaries", "Male", "Female", "Quantity", "Unit", "Item", "Remarks"]
+    category_record_indices = [
+        index for index, record in enumerate(activity_records)
+        if record.get("Category") == report_category
+    ]
+    if category_record_indices:
+        records_df = pd.DataFrame(
+            [activity_records[index] for index in category_record_indices],
+            index=category_record_indices
+        )
+        display_columns = [
+            "Recorded", "Site", "Palika", "Ward", "Output", "Output activity",
+            "Sub-activity", "Beneficiaries", *DEMOGRAPHIC_COLUMNS,
+            "Quantity", "Unit", "Item", "Remarks"
+        ]
         for column in display_columns:
             if column not in records_df.columns:
                 records_df[column] = pd.NA
+        records_df["Sub-activity"] = records_df["Sub-activity"].fillna(records_df["Activity"]).fillna("Not recorded")
+        for column in ["Palika", "Ward", "Output", "Output activity"]:
+            records_df[column] = (
+                records_df[column].fillna("Not linked").astype(str).str.strip()
+                .replace("", "Not linked")
+            )
+        records_df["Beneficiaries"] = pd.to_numeric(records_df["Beneficiaries"], errors="coerce")
+
+        filter_columns = st.columns(5)
+        with filter_columns[0]:
+            output_filter_options = ["All outputs"] + sorted(records_df["Output"].unique().tolist())
+            log_output_filter = st.selectbox("Filter by output", output_filter_options, key="activity_log_filter_output")
+        output_filtered_records = records_df if log_output_filter == "All outputs" else records_df[
+            records_df["Output"] == log_output_filter
+        ]
+        with filter_columns[1]:
+            output_activity_filter_options = ["All output activities"] + sorted(output_filtered_records["Output activity"].unique().tolist())
+            log_output_activity_filter = st.selectbox(
+                "Filter by output activity", output_activity_filter_options,
+                key="activity_log_filter_output_activity"
+            )
+        output_activity_filtered_records = output_filtered_records if log_output_activity_filter == "All output activities" else output_filtered_records[
+            output_filtered_records["Output activity"] == log_output_activity_filter
+        ]
+        with filter_columns[2]:
+            palika_filter_options = ["All palikas"] + sorted(output_activity_filtered_records["Palika"].unique().tolist())
+            log_palika_filter = st.selectbox("Filter by palika", palika_filter_options, key="activity_log_filter_palika")
+        palika_filtered_records = output_activity_filtered_records if log_palika_filter == "All palikas" else output_activity_filtered_records[
+            output_activity_filtered_records["Palika"] == log_palika_filter
+        ]
+        with filter_columns[3]:
+            ward_filter_options = ["All wards"] + sorted(palika_filtered_records["Ward"].unique().tolist())
+            log_ward_filter = st.selectbox("Filter by ward", ward_filter_options, key="activity_log_filter_ward")
+        ward_filtered_records = palika_filtered_records if log_ward_filter == "All wards" else palika_filtered_records[
+            palika_filtered_records["Ward"] == log_ward_filter
+        ]
+        with filter_columns[4]:
+            subactivity_filter_options = ["All sub-activities"] + sorted(ward_filtered_records["Sub-activity"].astype(str).unique().tolist())
+            log_subactivity_filter = st.selectbox("Filter by sub-activity", subactivity_filter_options, key="activity_log_filter_subactivity")
+        visible_records = ward_filtered_records if log_subactivity_filter == "All sub-activities" else ward_filtered_records[
+            ward_filtered_records["Sub-activity"].astype(str) == log_subactivity_filter
+        ]
 
         st.markdown(f"#### {report_category} entries")
-        st.dataframe(records_df[display_columns], width="stretch", hide_index=True)
+        st.dataframe(visible_records[display_columns], width="stretch", hide_index=True)
 
-        chart_df = records_df.groupby("Site", as_index=False)["Beneficiaries"].sum().sort_values("Beneficiaries", ascending=False)
+        st.markdown("#### Edit a saved entry")
+        st.caption("Select an entry from the filtered results, update its details or links, then save your changes.")
+        if visible_records.empty:
+            st.info("No entries match these filters.")
+        else:
+            editable_indices = visible_records.index.tolist()
+            selected_record_index = st.selectbox(
+                "Entry to edit",
+                editable_indices,
+                format_func=lambda index: (
+                    f"{activity_records[index].get('Site', 'Unnamed site')} — "
+                    f"{activity_records[index].get('Sub-activity', activity_records[index].get('Activity', 'Activity'))}"
+                ),
+                key="activity_log_edit_selection"
+            )
+            selected_record = activity_records[selected_record_index]
+            edit_id = selected_record.get("id", f"legacy_{selected_record_index}")
+
+            stored_output = selected_record.get("Output", OUTPUT_ORDER[0])
+            edited_output = st.selectbox(
+                "Output",
+                OUTPUT_ORDER,
+                index=OUTPUT_ORDER.index(stored_output) if stored_output in OUTPUT_ORDER else 0,
+                key=f"edit_output_{edit_id}"
+            )
+            edit_output_rows = st.session_state.data_matrix[
+                st.session_state.data_matrix['CCC Output'] == edited_output
+            ]
+            edit_output_options = (
+                edit_output_rows['Indicator'].dropna().astype(str).str.strip()
+                .loc[lambda values: values.ne('')].drop_duplicates().tolist()
+            )
+            edit_output_options.append("Other activity (specify)")
+            stored_output_activity = str(selected_record.get("Output activity", ""))
+            selected_edit_activity = st.selectbox(
+                "Output activity / indicator",
+                edit_output_options,
+                index=edit_output_options.index(stored_output_activity) if stored_output_activity in edit_output_options else len(edit_output_options) - 1,
+                key=f"edit_output_indicator_{edit_id}"
+            )
+            if selected_edit_activity == "Other activity (specify)":
+                edited_output_activity = st.text_input(
+                    "Specify output activity",
+                    value=stored_output_activity if stored_output_activity not in edit_output_options else "",
+                    key=f"edit_custom_output_activity_{edit_id}"
+                )
+            else:
+                edited_output_activity = selected_edit_activity
+
+            with st.form(f"edit_activity_{edit_id}"):
+                edited_site = st.text_input(
+                    "Site / location",
+                    value=str(selected_record.get("Site", "")),
+                    key=f"edit_site_{edit_id}"
+                )
+                edited_location_col, edited_ward_col = st.columns(2)
+                with edited_location_col:
+                    edited_palika = st.text_input(
+                        "Palika", value=str(selected_record.get("Palika", "")),
+                        key=f"edit_palika_{edit_id}"
+                    )
+                with edited_ward_col:
+                    edited_ward = st.text_input(
+                        "Ward number", value=str(selected_record.get("Ward", "")),
+                        key=f"edit_ward_{edit_id}"
+                    )
+                if report_category == "Material Distribution":
+                    edited_quantity_value = pd.to_numeric(selected_record.get("Quantity"), errors="coerce")
+                    edited_item = st.text_input(
+                        "Item / material distributed",
+                        value=str(selected_record.get("Item", selected_record.get("Activity", ""))),
+                        key=f"edit_item_{edit_id}"
+                    )
+                    edited_quantity = st.number_input(
+                        "Number of items distributed", min_value=0,
+                        value=0 if pd.isna(edited_quantity_value) else max(0, int(edited_quantity_value)),
+                        step=1, key=f"edit_quantity_{edit_id}"
+                    )
+                    edited_unit = st.text_input(
+                        "Item unit", value=str(selected_record.get("Unit", "")),
+                        key=f"edit_unit_{edit_id}"
+                    )
+                else:
+                    edited_intervention = ""
+                    activity_value = str(selected_record.get("Activity", ""))
+                    if report_category == "Other Intervention":
+                        edited_intervention = str(selected_record.get("Intervention type", ""))
+                        if edited_intervention and activity_value.startswith(f"{edited_intervention}: "):
+                            activity_value = activity_value[len(edited_intervention) + 2:]
+                        edited_intervention = st.text_input(
+                            "Intervention name",
+                            value=edited_intervention,
+                            key=f"edit_intervention_{edit_id}"
+                        )
+                    edited_activity = st.text_area(
+                        "Sub-activity",
+                        value=str(selected_record.get("Sub-activity", activity_value)),
+                        height=100,
+                        key=f"edit_activity_description_{edit_id}"
+                    )
+
+                edited_beneficiaries_value = pd.to_numeric(selected_record.get("Beneficiaries"), errors="coerce")
+                edited_beneficiaries = st.number_input(
+                    "People who benefited",
+                    min_value=0,
+                    value=0 if pd.isna(edited_beneficiaries_value) else max(0, int(edited_beneficiaries_value)),
+                    step=1,
+                    key=f"edit_beneficiaries_{edit_id}"
+                )
+                with st.expander("Edit demographic information", expanded=False):
+                    edited_demographics = render_demographic_inputs(
+                        selected_record,
+                        key_prefix=f"edit_demographics_{edit_id}"
+                    )
+                edited_remarks = st.text_area(
+                    "Notes or missing information",
+                    value=str(selected_record.get("Remarks", "")),
+                    key=f"edit_remarks_{edit_id}"
+                )
+                save_edit = st.form_submit_button("Save changes", type="primary")
+
+            if save_edit:
+                if not edited_site.strip():
+                    st.error("Please enter the site or location before saving changes.")
+                elif not edited_palika.strip() or not edited_ward.strip():
+                    st.error("Please enter both the palika and ward before saving changes.")
+                elif not edited_output_activity.strip():
+                    st.error("Please enter the linked output activity before saving changes.")
+                elif report_category == "Other Intervention" and not edited_intervention.strip():
+                    st.error("Please enter the intervention name before saving changes.")
+                else:
+                    updated_record = {
+                        **selected_record,
+                        "Output": edited_output,
+                        "Output activity": edited_output_activity.strip(),
+                        "Sub-activity": (
+                            edited_item.strip() if report_category == "Material Distribution" and edited_item.strip()
+                            else edited_activity.strip() if report_category != "Material Distribution"
+                            else "Material distribution"
+                        ),
+                        "Site": edited_site.strip(),
+                        "Palika": edited_palika.strip(),
+                        "Ward": edited_ward.strip(),
+                        "Beneficiaries": int(edited_beneficiaries),
+                        "Remarks": edited_remarks.strip(),
+                        "Updated": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                        **{field: int(value) for field, value in edited_demographics.items()},
+                    }
+                    if report_category == "Material Distribution":
+                        updated_record.update({
+                            "Activity": edited_item.strip() or "Material distribution",
+                            "Item": edited_item.strip(),
+                            "Quantity": int(edited_quantity),
+                            "Unit": edited_unit.strip(),
+                        })
+                    else:
+                        updated_record["Activity"] = (
+                            f"{edited_intervention.strip()}: {edited_activity.strip()}"
+                            if report_category == "Other Intervention" and edited_activity.strip()
+                            else edited_intervention.strip() if report_category == "Other Intervention"
+                            else edited_activity.strip()
+                        )
+                        if report_category == "Other Intervention":
+                            updated_record["Intervention type"] = edited_intervention.strip()
+                    activity_records[selected_record_index] = updated_record
+                    try:
+                        save_activity_log(activity_records)
+                        st.success("Activity entry updated.")
+                        st.rerun()
+                    except OSError as error:
+                        st.error(f"Could not update the activity log: {error}")
+
+        chart_df = visible_records.groupby("Site", as_index=False)["Beneficiaries"].sum().sort_values("Beneficiaries", ascending=False)
         if not chart_df.empty and (chart_df["Beneficiaries"] > 0).any():
             st.markdown("#### Beneficiaries by site")
             fig = px.bar(
@@ -710,7 +1098,10 @@ with tab_activity_log:
             st.plotly_chart(apply_chart_theme(fig), width="stretch")
 
         if report_category != "Material Distribution":
-            gender_summary = records_df.groupby("Site", as_index=False)[["Male", "Female"]].sum()
+            gender_source = visible_records.copy()
+            for demographic in ["Male", "Female"]:
+                gender_source[demographic] = pd.to_numeric(gender_source[demographic], errors="coerce").fillna(0)
+            gender_summary = gender_source.groupby("Site", as_index=False)[["Male", "Female"]].sum()
             if not gender_summary.empty:
                 st.markdown("#### Male and female beneficiaries by site")
                 gender_chart = px.bar(
@@ -829,62 +1220,7 @@ with tab_output:
     st.info(output_interpretation(output_totals.set_index('CCC Output')))
 
 # =========================================================
-# TAB 4: TIME-LAPSE & TRENDS
-# =========================================================
-with tab_timelapse:
-    st.subheader("Target and Progress")
-    st.caption("Simple target and achievement tracking for each output.")
-
-    period_summary = summarize_outputs(
-        df_active, ['Target', 'Progress']
-    ).reset_index()
-    period_summary['Progress %'] = (period_summary['Progress'] / period_summary['Target'].replace(0, 1) * 100).round(1)
-    period_summary['Status'] = period_summary.apply(
-        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else ('No target recorded' if row['Target'] <= 0 else 'Not met'), axis=1
-    )
-
-    chart_data = period_summary.melt(
-        id_vars='CCC Output',
-        value_vars=['Target', 'Progress'],
-        var_name='Measure', value_name='Value'
-    )
-    chart_data['Measure'] = chart_data['Measure'].replace({
-        'Progress': 'Progress'
-    })
-    fig_time = px.bar(
-        chart_data, x='Value', y='CCC Output', color='Measure', barmode='group',
-        orientation='h', text='Value', title='Target vs progress by output',
-        color_discrete_map={
-            'Target': '#e4a11b', 'Progress': '#0f626b'
-        }, height=max(360, min(620, 55 * len(period_summary) + 120))
-    )
-    fig_time.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
-    st.plotly_chart(apply_chart_theme(fig_time), width="stretch")
-    st.info(output_interpretation(
-        period_summary.set_index('CCC Output'),
-        achieved_column='Progress',
-        target_column='Target',
-        period_label='target'
-    ))
-
-    st.markdown("#### Target and progress overview")
-    st.caption("A target is considered achieved when progress is greater than or equal to the target value.")
-    display_period = period_summary.rename(columns={
-        'CCC Output': 'Output', 'Target': 'Target', 'Progress': 'Progress',
-        'Progress %': 'Progress %', 'Status': 'Status'
-    })
-    st.dataframe(
-        display_period[['Output', 'Target', 'Progress', 'Progress %', 'Status']],
-        width="stretch", hide_index=True,
-        column_config={
-            'Target': st.column_config.NumberColumn('Target', format='%.0f'),
-            'Progress': st.column_config.NumberColumn('Progress', format='%.0f'),
-            'Progress %': st.column_config.NumberColumn('Progress %', format='%.1f%%')
-        }
-    )
-
-# =========================================================
-# TAB 5: MONITORING VIEW
+# TAB 4: MONITORING VIEW
 # =========================================================
 with tab_monitoring:
     st.subheader("Progress Monitoring Center")
@@ -942,7 +1278,7 @@ with tab_monitoring:
         )
 
 # =========================================================
-# TAB 6: TARGET & PROGRESS EDITOR (LIVE UPDATE)
+# TAB 5: TARGET & PROGRESS EDITOR (LIVE UPDATE)
 # =========================================================
 with tab_editor:
     st.subheader("Live Data Matrix & Target Editor")
