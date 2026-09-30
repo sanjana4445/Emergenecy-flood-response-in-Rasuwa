@@ -432,23 +432,15 @@ df_active = st.session_state.data_matrix[
 
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
-st.markdown("#### Output-based target and progress", unsafe_allow_html=True)
-st.caption("Each output shows its activity-wise targets and progress within the same section.")
-total_output_target = float(df_active['Target'].sum())
-overview_totals = st.columns(3)
+st.markdown("#### Outputs and activity targets", unsafe_allow_html=True)
+st.caption("Each output lists its activities with their individual targets and progress.")
+overview_totals = st.columns(2)
 overview_totals[0].metric("Outputs", len(OUTPUT_ORDER))
 overview_totals[1].metric("Activities", len(df_active))
-overview_totals[2].metric("Combined target", f"{total_output_target:,.0f}")
 for row_start in range(0, len(OUTPUT_ORDER), 2):
     card_columns = st.columns(2, gap="medium")
     for column_index, output_name in enumerate(OUTPUT_ORDER[row_start:row_start + 2]):
         output_activities = df_active[df_active['CCC Output'] == output_name].copy()
-        total_target = float(output_activities['Target'].sum()) if not output_activities.empty else 0
-        total_progress = float(output_activities['Progress'].sum()) if not output_activities.empty else 0
-        progress_pct = (total_progress / total_target * 100) if total_target else 0
-        is_met = total_target > 0 and total_progress >= total_target
-        status_text = 'Target achieved' if is_met else ('No target recorded' if total_target == 0 else 'Target not met')
-        status_class = 'met' if is_met else ''
         activity_rows_html = []
         if output_activities.empty:
             activity_rows_html.append('<div class="output-activity-item"><div class="output-activity-head"><span class="output-activity-name">No activity data</span></div></div>')
@@ -479,11 +471,6 @@ for row_start in range(0, len(OUTPUT_ORDER), 2):
             st.html(f'''
                 <div class="output-summary-card">
                     <div class="output-summary-title">{escape(output_name)}</div>
-                    <div class="output-summary-row"><span class="label">Target</span><strong>{total_target:,.0f}</strong></div>
-                    <div class="output-summary-row"><span class="label">Progress</span><strong>{total_progress:,.0f}</strong></div>
-                    <div class="output-summary-row"><span class="label">Achievement</span><strong>{progress_pct:.1f}%</strong></div>
-                    <div class="output-progress-bar"><div class="output-progress-fill" style="width: {min(100, max(0, progress_pct))}%"></div></div>
-                    <div class="output-summary-status {status_class}">{status_text}</div>
                     <div class="output-activity-list">{''.join(activity_rows_html)}</div>
                 </div>
             ''')
