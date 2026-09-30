@@ -70,6 +70,33 @@ st.markdown("""
     .output-status { font-size: 14px; font-weight: 800; margin-top: 6px; }
     .output-met { color: #20965a; }
     .output-pending { color: #d97706; }
+    .output-summary-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+        border: 1px solid #dfe7e4;
+        border-radius: 18px;
+        padding: 18px 18px 10px;
+        margin-bottom: 18px;
+        box-shadow: 0 4px 12px rgba(15, 98, 107, 0.05);
+    }
+    .output-summary-title {
+        font-size: 15px; font-weight: 800; color: #173b3d; margin-bottom: 12px;
+    }
+    .output-summary-row {
+        display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid #edf1f0;
+        font-size: 16px; color: #243331;
+    }
+    .output-summary-row strong { font-size: 24px; font-weight: 800; color: #0f172a; }
+    .output-summary-row .label { font-weight: 600; color: #52635f; }
+    .output-summary-status {
+        font-weight: 800; font-size: 17px; margin-top: 12px; color: #d97706;
+    }
+    .output-summary-status.met { color: #15803d; }
+    .output-progress-bar {
+        width: 100%; height: 10px; border-radius: 999px; background: #e7efe9; overflow: hidden; margin-top: 10px;
+    }
+    .output-progress-fill {
+        height: 100%; border-radius: inherit; background: linear-gradient(90deg, #86efac 0%, #22c55e 45%, #15803d 100%);
+    }
     .activity-item { border-top: 1px solid #edf1f0; padding: 10px 0; }
     .activity-name { color: var(--teal); font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
     .activity-description { color: #687673; font-size: 12px; line-height: 1.35; margin-top: 4px; overflow-wrap: anywhere; }
@@ -341,39 +368,29 @@ df_active = st.session_state.data_matrix[
 
 df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replace(0, 1) * 100).round(1)
 
-st.markdown("#### Output-wise daily performance", unsafe_allow_html=True)
-st.caption("Each activity shows its Excel target, achieved progress, and completion percentage.")
+st.markdown("#### Output-based target and progress", unsafe_allow_html=True)
+st.caption("Each output is summarized by the total target and total achievement across its linked activities.")
 for row_start in range(0, len(OUTPUT_ORDER), 2):
     card_columns = st.columns(2, gap="medium")
     for column_index, output_name in enumerate(OUTPUT_ORDER[row_start:row_start + 2]):
         output_activities = df_active[df_active['CCC Output'] == output_name]
-        activity_markup = []
-        for _, activity_row in output_activities.iterrows():
-            target = float(activity_row['Target'])
-            achieved = float(activity_row['Progress'])
-            progress_pct = achieved / target * 100 if target else 0
-            status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
-            indicator = escape(str(activity_row['Indicator']))
-            activity = str(activity_row['Activity']).strip()
-            description = f'<div class="activity-description">{escape(activity)}</div>' if activity else ''
-            activity_markup.append(
-                f'<div class="activity-item">'
-                f'<div class="activity-name">{indicator}</div>'
-                f'{description}'
-                f'<div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>'
-                f'<div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>'
-                f'<div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>'
-                f'<div class="output-status {"output-met" if status == "Met target" else "output-pending"}">{status}</div>'
-                f'</div>'
-            )
+        total_target = float(output_activities['Target'].sum()) if not output_activities.empty else 0
+        total_progress = float(output_activities['Progress'].sum()) if not output_activities.empty else 0
+        progress_pct = (total_progress / total_target * 100) if total_target else 0
+        is_met = total_target > 0 and total_progress >= total_target
+        status_text = 'Target achieved' if is_met else ('No target recorded' if total_target == 0 else 'Target not met')
+        status_class = 'met' if is_met else ''
         with card_columns[column_index]:
-            card_markup = (
-                f'<div class="metric-card output-card">'
-                f'<div class="metric-title">{escape(output_name)}</div>'
-                f'{"".join(activity_markup)}'
-                f'</div>'
-            )
-            st.html(card_markup)
+            st.markdown(f'''
+                <div class="output-summary-card">
+                    <div class="output-summary-title">{escape(output_name)}</div>
+                    <div class="output-summary-row"><span class="label">Target</span><strong>{total_target:,.0f}</strong></div>
+                    <div class="output-summary-row"><span class="label">Progress</span><strong>{total_progress:,.0f}</strong></div>
+                    <div class="output-summary-row"><span class="label">Achievement</span><strong>{progress_pct:.1f}%</strong></div>
+                    <div class="output-progress-bar"><div class="output-progress-fill" style="width: {min(100, max(0, progress_pct))}%"></div></div>
+                    <div class="output-summary-status {status_class}">{status_text}</div>
+                </div>
+            ''', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
@@ -577,225 +594,136 @@ with tab_exec:
 # TAB 2: SUB-ACTIVITY LOG
 # =========================================================
 with tab_activity_log:
-    st.subheader("Record an activity")
-    st.caption("Create one entry for one completed activity in one ward. For example: repaired taps in Kalika, Ward 2.")
+    st.subheader("Activity Log")
+    st.caption("Add entries in the same structure used in your field report: schools, holding centers, child-friendly spaces, and material distribution.")
 
-    selected_log_output = st.selectbox(
-        "Output / result area",
-        OUTPUT_ORDER,
-        key="activity_log_output",
-        help="Choose the result area this activity supports."
-    )
     activity_records = load_activity_log()
+    category_summary = {
+        "Schools": 0,
+        "Holding Centers": 0,
+        "Child-Friendly Spaces": 0,
+        "Material Distribution": 0,
+    }
+    for record in activity_records:
+        category = record.get("Category")
+        if category in category_summary:
+            category_summary[category] += 1
 
-    with st.form("add_output_activity", clear_on_submit=True):
-        st.markdown("#### What was done and where?")
-        subactivity = st.text_input(
-            "Activity / intervention",
-            placeholder="For example: Repaired household taps",
-            help="Describe the work completed, not the result total."
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Total entries", len(activity_records))
+    summary_cols[1].metric("Schools", category_summary["Schools"])
+    summary_cols[2].metric("Holding centers", category_summary["Holding Centers"])
+    summary_cols[3].metric("Child-friendly spaces", category_summary["Child-Friendly Spaces"])
+
+    report_category = st.selectbox(
+        "Entry type",
+        ["Schools", "Holding Centers", "Child-Friendly Spaces", "Material Distribution"],
+        key="report_entry_category",
+        help="Choose the report section that matches the data you want to log."
+    )
+
+    with st.form("report_entry_form", clear_on_submit=True):
+        site = st.text_input(
+            "Site / location",
+            placeholder="For example: Nildkantha Secondary School - Uttargaya-5",
+            help="Enter the exact site name as it appears in the report."
         )
-        location_col, ward_col = st.columns(2)
-        with location_col:
-            activity_palika = st.text_input(
-                "Palika",
-                placeholder="For example: Kalika",
-                help="Use the same spelling each time so entries group together."
-            )
-        with ward_col:
-            activity_ward = st.text_input("Ward number", placeholder="For example: 2")
 
-        st.markdown("#### Quantity and people reached")
-        quantity_col, unit_col = st.columns(2)
-        with quantity_col:
-            delivered_quantity = st.number_input(
-                "Items or events delivered",
-                min_value=0,
-                value=None,
-                step=1,
-                help="Count items or events, such as 12 taps or 1 training. This is not a people count."
-            )
-        with unit_col:
-            quantity_unit = st.text_input("Unit", placeholder="For example: taps, kits, trainings")
-        people_col, notes_col = st.columns(2)
-        with people_col:
-            people_benefited = st.number_input(
-                "People reached",
-                min_value=0,
-                value=None,
-                step=1,
-                help="Enter the number of people reached by this activity, if known. Leave blank if it was not recorded."
-            )
-        with notes_col:
-            activity_notes = st.text_input(
-                "Site or notes (optional)",
-                placeholder="For example: Thulo Gaun health post"
-            )
-
-        with st.expander("Optional: demographic breakdown", expanded=False):
-            st.caption("Enter counts from your source records. Leave unknown counts blank. Record categories as defined by your reporting form; some groups may overlap.")
-            demographic_labels = {
-                'Households': 'Households reached',
-                'Male': 'Male people',
-                'Female': 'Female people',
-                'Children': 'Children (total)',
-                'Boys': 'Boys',
-                'Girls': 'Girls',
-                'PWD': 'People with disabilities',
-            }
-            demographic_inputs = {}
-            demographic_columns = st.columns(2)
-            for index, demographic in enumerate(DEMOGRAPHIC_COLUMNS):
-                with demographic_columns[index % len(demographic_columns)]:
-                    demographic_inputs[demographic] = st.number_input(
-                        demographic_labels[demographic],
-                        min_value=0,
-                        value=None,
-                        step=1,
-                        key=f"activity_{demographic.lower()}"
-                    )
-
-        add_activity = st.form_submit_button("Save activity", type="primary")
-
-    if add_activity:
-        if not subactivity.strip() or not activity_palika.strip() or not activity_ward.strip():
-            st.error("Enter a sub-activity, palika, and ward before adding it.")
+        if report_category == "Material Distribution":
+            item = st.text_input("Item / material", placeholder="For example: Hygiene Kit")
+            quantity = st.number_input("Quantity distributed", min_value=0, value=0, step=1)
+            beneficiaries = st.number_input("Beneficiaries reached", min_value=0, value=0, step=1)
+            unit = st.text_input("Unit", placeholder="kits / packs / sets")
+            remarks = st.text_area("Remarks", placeholder="For example: Distributed to households in Dhunche and local responders.")
         else:
-            new_activity = {
+            activity = st.text_area(
+                "Activity / intervention",
+                height=120,
+                placeholder="For example: Full repair & maintenance of water storage reservoir tank",
+                help="Describe the activity clearly in the same way as your report table."
+            )
+            beneficiaries = st.number_input("Beneficiaries / people reached", min_value=0, value=0, step=1)
+            male = st.number_input("Male", min_value=0, value=0, step=1)
+            female = st.number_input("Female", min_value=0, value=0, step=1)
+            remarks = st.text_area("Remarks", placeholder="For example: Segregated data yet to be updated.")
+
+        submit_entry = st.form_submit_button("Save entry", type="primary")
+
+    if submit_entry:
+        if not site.strip():
+            st.error("Please fill in the site or location before saving.")
+        else:
+            record = {
                 "id": uuid4().hex,
-                "Output": selected_log_output,
-                "Sub-activity": subactivity.strip(),
-                "Palika": activity_palika.strip(),
-                "Ward": activity_ward.strip(),
-                "Quantity": int(delivered_quantity) if delivered_quantity is not None else None,
-                "Unit": quantity_unit.strip(),
-                "People benefited": int(people_benefited) if people_benefited is not None else None,
-                "Location / notes": activity_notes.strip(),
+                "Category": report_category,
+                "Site": site.strip(),
                 "Recorded": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                "Beneficiaries": int(beneficiaries),
+                "Remarks": remarks.strip(),
             }
-            new_activity.update({
-                column: int(value) if value is not None else None
-                for column, value in demographic_inputs.items()
-            })
-            activity_records.append(new_activity)
+
+            if report_category == "Material Distribution":
+                record.update({
+                    "Activity": item.strip() if item.strip() else "Material distribution",
+                    "Item": item.strip(),
+                    "Quantity": int(quantity),
+                    "Unit": unit.strip(),
+                })
+            else:
+                record.update({
+                    "Activity": activity.strip(),
+                    "Male": int(male),
+                    "Female": int(female),
+                })
+
+            activity_records.append(record)
             try:
                 save_activity_log(activity_records)
-                st.success("Sub-activity saved.")
-            except OSError as error:
-                activity_records.pop()
-                st.error(f"Could not save the activity log: {error}")
-
-    output_records = [
-        (index, record) for index, record in enumerate(activity_records)
-        if record.get("Output") == selected_log_output
-    ]
-    if output_records:
-        record_frame = pd.DataFrame([record for _, record in output_records])
-        for column in [
-            'Recorded', 'Palika', 'Ward', 'Sub-activity', 'Quantity', 'Unit',
-            'People benefited', 'Location / notes', *DEMOGRAPHIC_COLUMNS
-        ]:
-            if column not in record_frame:
-                record_frame[column] = pd.NA
-        for column in DEMOGRAPHIC_COLUMNS:
-            record_frame[column] = pd.to_numeric(record_frame[column], errors='coerce')
-        record_frame['People benefited'] = pd.to_numeric(record_frame['People benefited'], errors='coerce')
-        total_people = record_frame['People benefited'].sum(min_count=1)
-        metric_columns = st.columns(2)
-        metric_columns[0].metric("Sub-activities recorded", len(record_frame))
-        metric_columns[1].metric(
-            "People reached",
-            "Not reported" if pd.isna(total_people) else f"{total_people:,.0f}"
-        )
-
-        st.markdown("#### People reached by activity")
-        chart_data = (
-            record_frame.groupby('Sub-activity')['People benefited']
-            .sum(min_count=1)
-            .reset_index()
-            .sort_values('People benefited', ascending=False)
-        )
-        chart_data = chart_data[chart_data['People benefited'].fillna(0) > 0]
-        if chart_data.empty:
-            st.info("Enter a people-reached count to show this chart.")
-        else:
-            figure = px.pie(
-                chart_data,
-                values='People benefited',
-                names='Sub-activity',
-                hole=0.45,
-                title=f"People reached across {selected_log_output} activities"
-            )
-            figure.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(apply_chart_theme(figure), width="stretch")
-
-        st.markdown("#### Recorded sub-activities")
-        st.caption("Each row is one activity entry. Blank counts mean they were not reported; the activity quantity is separate from the people-reached count.")
-        st.dataframe(
-            record_frame[[
-                'Recorded', 'Palika', 'Ward', 'Sub-activity', 'Quantity', 'Unit',
-                'People benefited', *DEMOGRAPHIC_COLUMNS, 'Location / notes'
-            ]],
-            width="stretch",
-            hide_index=True
-        )
-
-        location_records = record_frame[
-            record_frame['Palika'].fillna('').astype(str).str.strip().ne('')
-            & record_frame['Ward'].fillna('').astype(str).str.strip().ne('')
-        ].copy()
-        if not location_records.empty:
-            st.markdown("#### People reached by palika and ward")
-            st.caption("Blank demographic values mean they were not reported. Older entries without location or demographic details are not included in these totals.")
-            location_totals = (
-                location_records.groupby(['Palika', 'Ward'])[DEMOGRAPHIC_COLUMNS]
-                .sum(min_count=1)
-                .reset_index()
-            )
-            st.dataframe(location_totals, width="stretch", hide_index=True)
-
-            st.markdown("#### People reached by activity and location")
-            activity_location_totals = (
-                location_records.groupby(['Palika', 'Ward', 'Sub-activity'])[DEMOGRAPHIC_COLUMNS]
-                .sum(min_count=1)
-                .reset_index()
-            )
-            st.dataframe(activity_location_totals, width="stretch", hide_index=True)
-        else:
-            st.info("Add a new activity with its palika and ward to see location-based demographic totals.")
-
-        remove_options = [index for index, _ in output_records]
-        remove_index = st.selectbox(
-            "Select a record to remove",
-            remove_options,
-            format_func=lambda index: (
-                f"{activity_records[index]['Sub-activity']} "
-                f"({int(activity_records[index]['People benefited']):,} people)"
-                if pd.notna(activity_records[index].get('People benefited'))
-                else f"{activity_records[index]['Sub-activity']} (people not reported)"
-            ),
-            key="activity_log_remove"
-        )
-        if st.button("Remove selected record", key="remove_activity_record"):
-            activity_records.pop(remove_index)
-            try:
-                save_activity_log(activity_records)
+                st.success(f"{report_category} entry saved.")
                 st.rerun()
             except OSError as error:
-                st.error(f"Could not update the activity log: {error}")
-    else:
-        st.info("No sub-activities have been recorded for this output yet.")
+                st.error(f"Could not save the entry: {error}")
 
-    output_targets = df_active[df_active['CCC Output'] == selected_log_output][[
-        'Indicator', 'Unit', 'Target', 'Weekly Target'
-    ]].rename(columns={
-        'Indicator': 'Excel indicator',
-        'Unit': 'Unit',
-        'Target': 'Daily target',
-        'Weekly Target': 'Weekly target'
-    })
-    st.markdown("#### Existing workbook targets")
-    st.dataframe(output_targets, width="stretch", hide_index=True)
+    filtered_records = [record for record in activity_records if record.get("Category") == report_category]
+    if filtered_records:
+        records_df = pd.DataFrame(filtered_records)
+        display_columns = ["Recorded", "Site", "Activity", "Beneficiaries", "Male", "Female", "Quantity", "Unit", "Item", "Remarks"]
+        for column in display_columns:
+            if column not in records_df.columns:
+                records_df[column] = pd.NA
+
+        st.markdown(f"#### {report_category} entries")
+        st.dataframe(records_df[display_columns], width="stretch", hide_index=True)
+
+        chart_df = records_df.groupby("Site", as_index=False)["Beneficiaries"].sum().sort_values("Beneficiaries", ascending=False)
+        if not chart_df.empty and (chart_df["Beneficiaries"] > 0).any():
+            st.markdown("#### Beneficiaries by site")
+            fig = px.bar(
+                chart_df,
+                x="Site",
+                y="Beneficiaries",
+                title=f"People reached across {report_category}",
+                color="Beneficiaries",
+                color_continuous_scale="Teal",
+                height=420
+            )
+            st.plotly_chart(apply_chart_theme(fig), width="stretch")
+
+        if report_category != "Material Distribution":
+            gender_summary = records_df.groupby("Site", as_index=False)[["Male", "Female"]].sum()
+            if not gender_summary.empty:
+                st.markdown("#### Male and female beneficiaries by site")
+                gender_chart = px.bar(
+                    gender_summary.melt(id_vars="Site", var_name="Gender", value_name="Count"),
+                    x="Site",
+                    y="Count",
+                    color="Gender",
+                    barmode="group",
+                    height=420
+                )
+                st.plotly_chart(apply_chart_theme(gender_chart), width="stretch")
+    else:
+        st.info(f"No {report_category.lower()} entries have been added yet.")
 
 # =========================================================
 # TAB 2: ACTIVITY DETAILS
@@ -904,35 +832,30 @@ with tab_output:
 # TAB 4: TIME-LAPSE & TRENDS
 # =========================================================
 with tab_timelapse:
-    st.subheader("Daily and Weekly Target Performance")
-    st.caption("All values below are read from the Daily and Weekly sheets in the Excel workbook.")
+    st.subheader("Target and Progress")
+    st.caption("Simple target and achievement tracking for each output.")
 
     period_summary = summarize_outputs(
-        df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
+        df_active, ['Target', 'Progress']
     ).reset_index()
-    period_summary['Daily %'] = (period_summary['Progress'] / period_summary['Target'].replace(0, 1) * 100).round(1)
-    period_summary['Weekly %'] = (period_summary['Weekly Progress'] / period_summary['Weekly Target'].replace(0, 1) * 100).round(1)
-    period_summary['Daily Target Met'] = period_summary.apply(
-        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else ('Not met' if row['Target'] > 0 else 'No target recorded'), axis=1
-    )
-    period_summary['Weekly Target Met'] = period_summary.apply(
-        lambda row: 'Met' if row['Weekly Target'] > 0 and row['Weekly Progress'] >= row['Weekly Target'] else ('Not met' if row['Weekly Target'] > 0 else 'No target recorded'), axis=1
+    period_summary['Progress %'] = (period_summary['Progress'] / period_summary['Target'].replace(0, 1) * 100).round(1)
+    period_summary['Status'] = period_summary.apply(
+        lambda row: 'Met' if row['Target'] > 0 and row['Progress'] >= row['Target'] else ('No target recorded' if row['Target'] <= 0 else 'Not met'), axis=1
     )
 
     chart_data = period_summary.melt(
         id_vars='CCC Output',
-        value_vars=['Target', 'Progress', 'Weekly Target', 'Weekly Progress'],
+        value_vars=['Target', 'Progress'],
         var_name='Measure', value_name='Value'
     )
     chart_data['Measure'] = chart_data['Measure'].replace({
-        'Progress': 'Daily achieved', 'Weekly Progress': 'Weekly achieved'
+        'Progress': 'Progress'
     })
     fig_time = px.bar(
         chart_data, x='Value', y='CCC Output', color='Measure', barmode='group',
-        orientation='h', text='Value', title='Daily and weekly target vs achieved by output',
+        orientation='h', text='Value', title='Target vs progress by output',
         color_discrete_map={
-            'Target': '#e4a11b', 'Daily achieved': '#0f626b',
-            'Weekly Target': '#f4c56a', 'Weekly achieved': '#58aeb5'
+            'Target': '#e4a11b', 'Progress': '#0f626b'
         }, height=max(360, min(620, 55 * len(period_summary) + 120))
     )
     fig_time.update_traces(texttemplate='%{text:,.0f}', textposition='outside', cliponaxis=False)
@@ -941,20 +864,23 @@ with tab_timelapse:
         period_summary.set_index('CCC Output'),
         achieved_column='Progress',
         target_column='Target',
-        period_label='daily'
+        period_label='target'
     ))
 
-    st.markdown("#### Target met by output")
-    st.caption("A target is met when achieved progress is greater than or equal to the corresponding Excel target.")
+    st.markdown("#### Target and progress overview")
+    st.caption("A target is considered achieved when progress is greater than or equal to the target value.")
     display_period = period_summary.rename(columns={
-        'CCC Output': 'Output', 'Target': 'Daily target', 'Progress': 'Daily achieved',
-        'Weekly Target': 'Weekly target', 'Weekly Progress': 'Weekly achieved',
-        'Daily %': 'Daily achievement %', 'Weekly %': 'Weekly achievement %'
+        'CCC Output': 'Output', 'Target': 'Target', 'Progress': 'Progress',
+        'Progress %': 'Progress %', 'Status': 'Status'
     })
     st.dataframe(
-        display_period[['Output', 'Daily target', 'Daily achieved', 'Daily achievement %', 'Daily Target Met',
-                        'Weekly target', 'Weekly achieved', 'Weekly achievement %', 'Weekly Target Met']],
-        width="stretch", hide_index=True
+        display_period[['Output', 'Target', 'Progress', 'Progress %', 'Status']],
+        width="stretch", hide_index=True,
+        column_config={
+            'Target': st.column_config.NumberColumn('Target', format='%.0f'),
+            'Progress': st.column_config.NumberColumn('Progress', format='%.0f'),
+            'Progress %': st.column_config.NumberColumn('Progress %', format='%.1f%%')
+        }
     )
 
 # =========================================================
@@ -962,31 +888,28 @@ with tab_timelapse:
 # =========================================================
 with tab_monitoring:
     st.subheader("Progress Monitoring Center")
-    st.caption("Use the output heatmap to compare daily and weekly progress, and the alerts to prioritize follow-up.")
+    st.caption("Progress rises from light green to fully green as the target is approached and completed.")
 
-    st.markdown("#### Daily and weekly progress by output")
+    st.markdown("#### Progress by output")
     tracking = summarize_outputs(
-        df_active, ['Target', 'Progress', 'Weekly Target', 'Weekly Progress']
+        df_active, ['Target', 'Progress']
     )
     heatmap_pct = pd.DataFrame(index=tracking.index)
-    heatmap_pct['Daily progress %'] = (
+    heatmap_pct['Progress %'] = (
         tracking['Progress'] / tracking['Target'].replace(0, 1) * 100
-    ).round(1)
-    heatmap_pct['Weekly progress %'] = (
-        tracking['Weekly Progress'] / tracking['Weekly Target'].replace(0, 1) * 100
     ).round(1)
     fig_heatmap = px.imshow(
         heatmap_pct,
         text_auto='.1f',
         aspect='auto',
-        color_continuous_scale=['#fee2e2', '#fef3c7', '#bbf7d0', '#15803d'],
+        color_continuous_scale=['#dcfce7', '#bbf7d0', '#86efac', '#16a34a', '#166534'],
         range_color=[0, 100],
-        labels={'x': 'Reporting period', 'y': 'Output', 'color': 'Progress %'},
+        labels={'x': 'Metric', 'y': 'Output', 'color': 'Progress %'},
         height=max(420, min(760, 42 * len(heatmap_pct) + 140))
     )
     fig_heatmap.update_traces(texttemplate='%{z:.1f}%', textfont={'color': '#243331'})
     st.plotly_chart(apply_chart_theme(fig_heatmap), width="stretch")
-    st.info("The heatmap compares the recorded daily and weekly progress percentages for each output. Empty weekly targets are shown as 0% until Excel is populated.")
+    st.info("Progress is shown on a green scale: lighter green means early progress, and full dark green indicates the target has been achieved.")
 
     st.markdown("#### Follow-up alerts")
     alert_table = summarize_outputs(df_active, ['Target', 'Progress']).reset_index()
