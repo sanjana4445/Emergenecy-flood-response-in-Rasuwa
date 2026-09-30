@@ -259,6 +259,7 @@ OUTPUT_ORDER = [
 ]
 
 ACTIVITY_LOG_PATH = Path(__file__).with_name("wash_activity_log.json")
+DEMOGRAPHIC_COLUMNS = ['Households', 'Male', 'Female', 'Children', 'Boys', 'Girls', 'PWD']
 
 def load_activity_log():
     if not ACTIVITY_LOG_PATH.exists():
@@ -427,6 +428,145 @@ with tab_exec:
 
     st.info(output_interpretation(ind_group.set_index('CCC Output')))
 
+    st.markdown("#### Activity reach by location and intervention")
+    st.caption("These filters and charts use recorded Activity Log entries. Excel target and progress figures above remain district-wide.")
+    dashboard_records = pd.DataFrame(load_activity_log())
+    if dashboard_records.empty:
+        st.info("Record an activity in the Activity Log to see palika, ward, intervention, and demographic summaries here.")
+    else:
+        dashboard_columns = [
+            'Output', 'Palika', 'Ward', 'Sub-activity', 'People benefited',
+            'Households', 'Male', 'Female', 'Children', 'Boys', 'Girls', 'PWD'
+        ]
+        for column in dashboard_columns:
+            if column not in dashboard_records:
+                dashboard_records[column] = pd.NA
+        for column in ['Output', 'Palika', 'Ward', 'Sub-activity']:
+            dashboard_records[column] = (
+                dashboard_records[column].fillna('Not recorded').astype(str).str.strip()
+                .replace('', 'Not recorded')
+            )
+        dashboard_numeric_columns = [
+            'People benefited', 'Households', 'Male', 'Female', 'Children', 'Boys', 'Girls', 'PWD'
+        ]
+        for column in dashboard_numeric_columns:
+            dashboard_records[column] = pd.to_numeric(dashboard_records[column], errors='coerce')
+
+        output_filter_col, palika_filter_col, ward_filter_col, activity_filter_col = st.columns(4)
+        output_options = ['All outputs'] + sorted(dashboard_records['Output'].unique().tolist())
+        with output_filter_col:
+            dashboard_output = st.selectbox('Output', output_options, key='overview_activity_output')
+        output_scope = dashboard_records if dashboard_output == 'All outputs' else dashboard_records[
+            dashboard_records['Output'] == dashboard_output
+        ]
+
+        palika_options = ['All palikas'] + sorted(output_scope['Palika'].unique().tolist())
+        with palika_filter_col:
+            dashboard_palika = st.selectbox('Palika', palika_options, key='overview_activity_palika')
+        palika_scope = output_scope if dashboard_palika == 'All palikas' else output_scope[
+            output_scope['Palika'] == dashboard_palika
+        ]
+
+        ward_options = ['All wards'] + sorted(palika_scope['Ward'].unique().tolist())
+        with ward_filter_col:
+            dashboard_ward = st.selectbox('Ward', ward_options, key='overview_activity_ward')
+        ward_scope = palika_scope if dashboard_ward == 'All wards' else palika_scope[
+            palika_scope['Ward'] == dashboard_ward
+        ]
+
+        activity_options = ['All activities'] + sorted(ward_scope['Sub-activity'].unique().tolist())
+        with activity_filter_col:
+            dashboard_activity = st.selectbox('Activity / intervention', activity_options, key='overview_activity_name')
+        filtered_activities = ward_scope if dashboard_activity == 'All activities' else ward_scope[
+            ward_scope['Sub-activity'] == dashboard_activity
+        ]
+
+        def format_reported_total(series):
+            total = series.sum(min_count=1)
+            return 'Not reported' if pd.isna(total) else f'{total:,.0f}'
+
+        reach_metrics = st.columns(4)
+        reach_metrics[0].metric('People benefited', format_reported_total(filtered_activities['People benefited']))
+        reach_metrics[1].metric('Households', format_reported_total(filtered_activities['Households']))
+        reach_metrics[2].metric('Children', format_reported_total(filtered_activities['Children']))
+        reach_metrics[3].metric('People with disabilities', format_reported_total(filtered_activities['PWD']))
+
+        intervention_summary = (
+            filtered_activities.groupby(['Output', 'Sub-activity'], as_index=False)['People benefited']
+            .sum(min_count=1)
+            .dropna(subset=['People benefited'])
+            .sort_values('People benefited', ascending=False)
+        )
+        location_summary = (
+            filtered_activities.groupby(['Palika', 'Ward'], as_index=False)['People benefited']
+            .sum(min_count=1)
+            .dropna(subset=['People benefited'])
+        )
+        location_summary['Palika / ward'] = location_summary['Palika'] + ' / Ward ' + location_summary['Ward']
+
+        intervention_col, location_col = st.columns(2)
+        with intervention_col:
+            st.markdown('**People reached by intervention**')
+            if intervention_summary.empty:
+                st.info('No beneficiary counts have been reported for this selection.')
+            else:
+                intervention_chart = px.bar(
+                    intervention_summary,
+                    x='People benefited',
+                    y='Sub-activity',
+                    color='Output',
+                    barmode='group',
+                    orientation='h',
+                    height=max(340, min(650, 42 * len(intervention_summary) + 120))
+                )
+                st.plotly_chart(apply_chart_theme(intervention_chart), width='stretch')
+
+        with location_col:
+            st.markdown('**People reached by palika and ward**')
+            if location_summary.empty:
+                st.info('No beneficiary counts have been reported for this selection.')
+            else:
+                location_chart = px.bar(
+                    location_summary.sort_values('People benefited'),
+                    x='People benefited',
+                    y='Palika / ward',
+                    orientation='h',
+                    height=max(340, min(650, 42 * len(location_summary) + 120))
+                )
+                st.plotly_chart(apply_chart_theme(location_chart), width='stretch')
+
+        st.markdown('**Gender and child counts by intervention**')
+        st.caption('Male/female and boys/girls are shown as entered. Do not add these categories together unless your reporting definitions make them mutually exclusive.')
+        gender_fields = ['Male', 'Female', 'Boys', 'Girls']
+        gender_summary = (
+            filtered_activities.groupby('Sub-activity')[gender_fields]
+            .sum(min_count=1)
+            .reset_index()
+            .melt(id_vars='Sub-activity', var_name='Reported group', value_name='People')
+            .dropna(subset=['People'])
+        )
+        if gender_summary.empty:
+            st.info('No gender or child counts have been reported for this selection.')
+        else:
+            gender_chart = px.bar(
+                gender_summary,
+                x='Sub-activity',
+                y='People',
+                color='Reported group',
+                barmode='group',
+                height=400
+            )
+            st.plotly_chart(apply_chart_theme(gender_chart), width='stretch')
+
+        st.markdown('**Disaggregated activity data**')
+        breakdown_columns = ['Palika', 'Ward', 'Output', 'Sub-activity'] + dashboard_numeric_columns
+        activity_breakdown = (
+            filtered_activities.groupby(['Palika', 'Ward', 'Output', 'Sub-activity'])[dashboard_numeric_columns]
+            .sum(min_count=1)
+            .reset_index()
+        )
+        st.dataframe(activity_breakdown[breakdown_columns], width='stretch', hide_index=True)
+
 # =========================================================
 # TAB 2: SUB-ACTIVITY LOG
 # =========================================================
@@ -446,6 +586,11 @@ with tab_activity_log:
             "Sub-activity",
             placeholder="For example: Installed household taps"
         )
+        location_col, ward_col = st.columns(2)
+        with location_col:
+            activity_palika = st.text_input("Palika", placeholder="Enter palika name")
+        with ward_col:
+            activity_ward = st.text_input("Ward", placeholder="Enter ward number")
         quantity_col, unit_col = st.columns(2)
         with quantity_col:
             delivered_quantity = st.number_input("Quantity delivered", min_value=0, step=1)
@@ -456,22 +601,41 @@ with tab_activity_log:
             people_benefited = st.number_input("People benefited", min_value=0, step=1)
         with notes_col:
             activity_notes = st.text_input("Location or notes", placeholder="Ward, site, or brief note")
+        st.markdown("**People reached (leave blank if not reported)**")
+        demographic_columns = st.columns(4)
+        demographic_inputs = {}
+        for index, demographic in enumerate(DEMOGRAPHIC_COLUMNS):
+            with demographic_columns[index % len(demographic_columns)]:
+                demographic_inputs[demographic] = st.number_input(
+                    demographic,
+                    min_value=0,
+                    value=None,
+                    step=1,
+                    key=f"activity_{demographic.lower()}"
+                )
         add_activity = st.form_submit_button("Add sub-activity")
 
     if add_activity:
-        if not subactivity.strip():
-            st.error("Enter a sub-activity before adding it.")
+        if not subactivity.strip() or not activity_palika.strip() or not activity_ward.strip():
+            st.error("Enter a sub-activity, palika, and ward before adding it.")
         else:
-            activity_records.append({
+            new_activity = {
                 "id": uuid4().hex,
                 "Output": selected_log_output,
                 "Sub-activity": subactivity.strip(),
+                "Palika": activity_palika.strip(),
+                "Ward": activity_ward.strip(),
                 "Quantity": int(delivered_quantity),
                 "Unit": quantity_unit.strip(),
                 "People benefited": int(people_benefited),
                 "Location / notes": activity_notes.strip(),
                 "Recorded": datetime.now().strftime('%Y-%m-%d %H:%M'),
+            }
+            new_activity.update({
+                column: int(value) if value is not None else None
+                for column, value in demographic_inputs.items()
             })
+            activity_records.append(new_activity)
             try:
                 save_activity_log(activity_records)
                 st.success("Sub-activity saved.")
@@ -485,6 +649,11 @@ with tab_activity_log:
     ]
     if output_records:
         record_frame = pd.DataFrame([record for _, record in output_records])
+        for column in ['Palika', 'Ward'] + DEMOGRAPHIC_COLUMNS:
+            if column not in record_frame:
+                record_frame[column] = pd.NA
+        for column in DEMOGRAPHIC_COLUMNS:
+            record_frame[column] = pd.to_numeric(record_frame[column], errors='coerce')
         total_people = int(pd.to_numeric(record_frame['People benefited'], errors='coerce').fillna(0).sum())
         metric_columns = st.columns(2)
         metric_columns[0].metric("Sub-activities recorded", len(record_frame))
@@ -513,12 +682,36 @@ with tab_activity_log:
         st.markdown("#### Recorded sub-activities")
         st.dataframe(
             record_frame[[
-                'Recorded', 'Sub-activity', 'Quantity', 'Unit',
-                'People benefited', 'Location / notes'
+                'Recorded', 'Palika', 'Ward', 'Sub-activity', 'Quantity', 'Unit',
+                'People benefited', *DEMOGRAPHIC_COLUMNS, 'Location / notes'
             ]],
             width="stretch",
             hide_index=True
         )
+
+        location_records = record_frame[
+            record_frame['Palika'].fillna('').astype(str).str.strip().ne('')
+            & record_frame['Ward'].fillna('').astype(str).str.strip().ne('')
+        ].copy()
+        if not location_records.empty:
+            st.markdown("#### People reached by palika and ward")
+            st.caption("Blank demographic values mean they were not reported. Older entries without location or demographic details are not included in these totals.")
+            location_totals = (
+                location_records.groupby(['Palika', 'Ward'])[DEMOGRAPHIC_COLUMNS]
+                .sum(min_count=1)
+                .reset_index()
+            )
+            st.dataframe(location_totals, width="stretch", hide_index=True)
+
+            st.markdown("#### People reached by activity and location")
+            activity_location_totals = (
+                location_records.groupby(['Palika', 'Ward', 'Sub-activity'])[DEMOGRAPHIC_COLUMNS]
+                .sum(min_count=1)
+                .reset_index()
+            )
+            st.dataframe(activity_location_totals, width="stretch", hide_index=True)
+        else:
+            st.info("Add a new activity with its palika and ward to see location-based demographic totals.")
 
         remove_options = [index for index, _ in output_records]
         remove_index = st.selectbox(
