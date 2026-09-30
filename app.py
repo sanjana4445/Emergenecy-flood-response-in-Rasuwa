@@ -189,7 +189,7 @@ def load_base_data(workbook_mtime):
                     return label
             return text.split('\n')[0]
 
-        def parse_activity_rows(sheet_name):
+        def parse_activity_rows(sheet_name, unit_index=9, target_index=10, progress_index=11, activity_index=12):
             raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
             rows = []
             current_output = 'General'
@@ -208,10 +208,10 @@ def load_base_data(workbook_mtime):
                 if pd.isna(indicator) or not str(indicator).strip():
                     continue
 
-                unit = row.iloc[9] if len(row) > 9 and pd.notna(row.iloc[9]) else ''
-                target = to_number(row.iloc[10]) if len(row) > 10 else None
-                progress = to_number(row.iloc[11]) if len(row) > 11 else None
-                activity = row.iloc[12] if len(row) > 12 and pd.notna(row.iloc[12]) else ''
+                unit = row.iloc[unit_index] if len(row) > unit_index and pd.notna(row.iloc[unit_index]) else ''
+                target = to_number(row.iloc[target_index]) if len(row) > target_index else None
+                progress = to_number(row.iloc[progress_index]) if len(row) > progress_index else None
+                activity = row.iloc[activity_index] if len(row) > activity_index and pd.notna(row.iloc[activity_index]) else ''
                 indicator = str(indicator).strip()
                 rows.append({
                     'Result_Area': current_output,
@@ -231,7 +231,13 @@ def load_base_data(workbook_mtime):
             return pd.DataFrame(columns=['Result_Area','Indicator','Activity','Unit','Target','Progress','Result_Statement','SN','key'])
 
         df_d = parse_activity_rows("WASH Response_Daily_Chaya")
-        df_w = parse_activity_rows("WASH Response_Weekly_Chaya")
+        df_w = parse_activity_rows(
+            "WASH Response_Weekly_Chaya",
+            unit_index=10,
+            target_index=11,
+            progress_index=12,
+            activity_index=13
+        )
 
         weekly = df_w[['key', 'Target', 'Progress']].rename(columns={
             'Target': 'Weekly Target', 'Progress': 'Weekly Progress'
@@ -293,7 +299,7 @@ def output_interpretation(summary, achieved_column='Progress', target_column='Ta
     )
 
 # Initialize the data once; future changes come only from the Data editor.
-DATA_MATRIX_VERSION = 9
+DATA_MATRIX_VERSION = 10
 data_needs_refresh = (
     st.session_state.get('data_matrix_version') != DATA_MATRIX_VERSION
     or st.session_state.get('data_matrix_source_mtime') != workbook_mtime
