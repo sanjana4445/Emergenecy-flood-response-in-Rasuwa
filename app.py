@@ -434,6 +434,11 @@ df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replac
 
 st.markdown("#### Output-based target and progress", unsafe_allow_html=True)
 st.caption("Each output shows its activity-wise targets and progress within the same section.")
+total_output_target = float(df_active['Target'].sum())
+overview_totals = st.columns(3)
+overview_totals[0].metric("Outputs", len(OUTPUT_ORDER))
+overview_totals[1].metric("Activities", len(df_active))
+overview_totals[2].metric("Combined target", f"{total_output_target:,.0f}")
 for row_start in range(0, len(OUTPUT_ORDER), 2):
     card_columns = st.columns(2, gap="medium")
     for column_index, output_name in enumerate(OUTPUT_ORDER[row_start:row_start + 2]):
@@ -471,7 +476,7 @@ for row_start in range(0, len(OUTPUT_ORDER), 2):
                     '''
                 )
         with card_columns[column_index]:
-            st.markdown(f'''
+            st.html(f'''
                 <div class="output-summary-card">
                     <div class="output-summary-title">{escape(output_name)}</div>
                     <div class="output-summary-row"><span class="label">Target</span><strong>{total_target:,.0f}</strong></div>
@@ -481,7 +486,7 @@ for row_start in range(0, len(OUTPUT_ORDER), 2):
                     <div class="output-summary-status {status_class}">{status_text}</div>
                     <div class="output-activity-list">{''.join(activity_rows_html)}</div>
                 </div>
-            ''', unsafe_allow_html=True)
+            ''')
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
