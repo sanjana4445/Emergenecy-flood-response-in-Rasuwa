@@ -332,23 +332,24 @@ for card_index, output_name in enumerate(OUTPUT_ORDER):
         indicator = escape(str(activity_row['Indicator']))
         activity = str(activity_row['Activity']).strip()
         description = f'<div class="activity-description">{escape(activity)}</div>' if activity else ''
-        activity_markup.append(f"""
-            <div class="activity-item">
-                <div class="activity-name">{indicator}</div>
-                {description}
-                <div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>
-                <div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>
-                <div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>
-                <div class="output-status {'output-met' if status == 'Met target' else 'output-pending'}">{status}</div>
-            </div>
-        """)
+        activity_markup.append(
+            f'<div class="activity-item">'
+            f'<div class="activity-name">{indicator}</div>'
+            f'{description}'
+            f'<div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>'
+            f'<div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>'
+            f'<div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>'
+            f'<div class="output-status {"output-met" if status == "Met target" else "output-pending"}">{status}</div>'
+            f'</div>'
+        )
     with card_columns[card_index % 3]:
-        st.markdown(f"""
-        <div class="metric-card output-card">
-            <div class="metric-title">{escape(output_name)}</div>
-            {''.join(activity_markup)}
-        </div>
-        """, unsafe_allow_html=True)
+        card_markup = (
+            f'<div class="metric-card output-card">'
+            f'<div class="metric-title">{escape(output_name)}</div>'
+            f'{"".join(activity_markup)}'
+            f'</div>'
+        )
+        st.html(card_markup)
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
