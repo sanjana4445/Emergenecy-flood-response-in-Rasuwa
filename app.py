@@ -79,7 +79,7 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(15, 98, 107, 0.05);
     }
     .output-summary-title {
-        font-size: 15px; font-weight: 800; color: #173b3d; margin-bottom: 12px;
+        font-size: 17px; font-weight: 800; color: #173b3d; margin-bottom: 12px;
     }
     .output-summary-row {
         display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-top: 1px solid #edf1f0;
@@ -101,19 +101,26 @@ st.markdown("""
         margin-top: 12px; display: grid; gap: 10px;
     }
     .output-activity-item {
-        background: #f8faf9; border: 1px solid #e7efe9; border-radius: 12px; padding: 10px 12px;
+        background: #ffffff; border: 1px solid #e0e9e3; border-left: 4px solid var(--activity-progress-color, #bbf7d0);
+        border-radius: 10px; padding: 13px 14px;
     }
     .output-activity-head {
-        display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; font-weight: 700; color: #173b3d; margin-bottom: 8px;
+        display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 15px; font-weight: 750; color: #173b3d; margin-bottom: 11px;
     }
     .output-activity-name {
         flex: 1; overflow-wrap: anywhere;
     }
     .output-activity-metrics {
-        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; font-size: 12px; color: #52635f;
+        display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; font-size: 13px; color: #52635f;
     }
     .output-activity-metrics strong {
-        color: #0f172a; font-size: 14px; display: block; margin-top: 2px;
+        color: #102a24; font-size: 17px; display: block; margin-top: 3px; font-weight: 750;
+    }
+    .output-activity-progress {
+        height: 8px; background: #edf3ef; border-radius: 999px; overflow: hidden; margin-top: 12px;
+    }
+    .output-activity-progress-fill {
+        height: 100%; border-radius: inherit; transition: width .35s ease;
     }
     .activity-item { border-top: 1px solid #edf1f0; padding: 10px 0; }
     .activity-name { color: var(--teal); font-size: 13px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
@@ -450,20 +457,28 @@ for row_start in range(0, len(OUTPUT_ORDER), 2):
                 activity_target = float(activity_row['Target'])
                 activity_progress = float(activity_row['Progress'])
                 activity_pct = (activity_progress / activity_target * 100) if activity_target else 0
-                activity_status = 'Met' if activity_target > 0 and activity_progress >= activity_target else ('No target' if activity_target == 0 else 'Not met')
+                if activity_pct >= 100:
+                    progress_color = '#15803d'
+                elif activity_pct >= 75:
+                    progress_color = '#22c55e'
+                elif activity_pct >= 50:
+                    progress_color = '#4ade80'
+                elif activity_pct > 0:
+                    progress_color = '#86efac'
+                else:
+                    progress_color = '#d1fae5'
                 activity_rows_html.append(
                     f'''
-                    <div class="output-activity-item">
+                    <div class="output-activity-item" style="--activity-progress-color: {progress_color};">
                         <div class="output-activity-head">
                             <span class="output-activity-name">{escape(activity_name)}</span>
-                            <span class="output-activity-status">{activity_status}</span>
                         </div>
                         <div class="output-activity-metrics">
                             <div>Target<strong>{activity_target:,.0f}</strong></div>
                             <div>Progress<strong>{activity_progress:,.0f}</strong></div>
                             <div>Achievement<strong>{activity_pct:.1f}%</strong></div>
-                            <div>Result<strong>{'Done' if activity_status == 'Met' else 'Pending'}</strong></div>
                         </div>
+                        <div class="output-activity-progress"><div class="output-activity-progress-fill" style="width: {min(100, max(0, activity_pct))}%; background-color: {progress_color};"></div></div>
                     </div>
                     '''
                 )
