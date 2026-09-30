@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import json
 from pathlib import Path
 from datetime import datetime
 from html import escape
+from uuid import uuid4
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -256,6 +258,20 @@ OUTPUT_ORDER = [
     "W5: Hygiene Promotion & Community Engagement",
 ]
 
+ACTIVITY_LOG_PATH = Path(__file__).with_name("wash_activity_log.json")
+
+def load_activity_log():
+    if not ACTIVITY_LOG_PATH.exists():
+        return []
+    try:
+        records = json.loads(ACTIVITY_LOG_PATH.read_text(encoding='utf-8'))
+        return records if isinstance(records, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+def save_activity_log(records):
+    ACTIVITY_LOG_PATH.write_text(json.dumps(records, indent=2), encoding='utf-8')
+
 def summarize_outputs(frame, value_columns):
     return frame.groupby('CCC Output')[value_columns].sum().reindex(OUTPUT_ORDER, fill_value=0)
 
@@ -320,42 +336,43 @@ df_active['Achievement_%'] = (df_active['Progress'] / df_active['Target'].replac
 
 st.markdown("#### Output-wise daily performance", unsafe_allow_html=True)
 st.caption("Each activity shows its Excel target, achieved progress, and completion percentage.")
-card_columns = st.columns(3, gap="medium")
-for card_index, output_name in enumerate(OUTPUT_ORDER):
-    output_activities = df_active[df_active['CCC Output'] == output_name]
-    activity_markup = []
-    for _, activity_row in output_activities.iterrows():
-        target = float(activity_row['Target'])
-        achieved = float(activity_row['Progress'])
-        progress_pct = achieved / target * 100 if target else 0
-        status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
-        indicator = escape(str(activity_row['Indicator']))
-        activity = str(activity_row['Activity']).strip()
-        description = f'<div class="activity-description">{escape(activity)}</div>' if activity else ''
-        activity_markup.append(
-            f'<div class="activity-item">'
-            f'<div class="activity-name">{indicator}</div>'
-            f'{description}'
-            f'<div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>'
-            f'<div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>'
-            f'<div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>'
-            f'<div class="output-status {"output-met" if status == "Met target" else "output-pending"}">{status}</div>'
-            f'</div>'
-        )
-    with card_columns[card_index % 3]:
-        card_markup = (
-            f'<div class="metric-card output-card">'
-            f'<div class="metric-title">{escape(output_name)}</div>'
-            f'{"".join(activity_markup)}'
-            f'</div>'
-        )
-        st.html(card_markup)
+for row_start in range(0, len(OUTPUT_ORDER), 2):
+    card_columns = st.columns(2, gap="medium")
+    for column_index, output_name in enumerate(OUTPUT_ORDER[row_start:row_start + 2]):
+        output_activities = df_active[df_active['CCC Output'] == output_name]
+        activity_markup = []
+        for _, activity_row in output_activities.iterrows():
+            target = float(activity_row['Target'])
+            achieved = float(activity_row['Progress'])
+            progress_pct = achieved / target * 100 if target else 0
+            status = 'Met target' if target > 0 and achieved >= target else ('No target recorded' if target == 0 else 'Target not met')
+            indicator = escape(str(activity_row['Indicator']))
+            activity = str(activity_row['Activity']).strip()
+            description = f'<div class="activity-description">{escape(activity)}</div>' if activity else ''
+            activity_markup.append(
+                f'<div class="activity-item">'
+                f'<div class="activity-name">{indicator}</div>'
+                f'{description}'
+                f'<div class="output-card-row"><span>Target</span><strong>{target:,.0f}</strong></div>'
+                f'<div class="output-card-row"><span>Achieved</span><strong>{achieved:,.0f}</strong></div>'
+                f'<div class="output-card-row"><span>Progress</span><strong>{progress_pct:.1f}%</strong></div>'
+                f'<div class="output-status {"output-met" if status == "Met target" else "output-pending"}">{status}</div>'
+                f'</div>'
+            )
+        with card_columns[column_index]:
+            card_markup = (
+                f'<div class="metric-card output-card">'
+                f'<div class="metric-title">{escape(output_name)}</div>'
+                f'{"".join(activity_markup)}'
+                f'</div>'
+            )
+            st.html(card_markup)
 
 # ---------------------------------------------------------
 # MAIN DASHBOARD TABS
 # ---------------------------------------------------------
-tab_exec, tab_palika, tab_output, tab_timelapse, tab_monitoring, tab_editor = st.tabs([
-    "Overview", "Activities", "Daily Log", "Trends", "Monitoring", "Data editor"
+tab_exec, tab_activity_log, tab_palika, tab_output, tab_timelapse, tab_monitoring, tab_editor = st.tabs([
+    "Overview", "Activity Log", "Activities", "Daily Log", "Trends", "Monitoring", "Data editor"
 ])
 
 # =========================================================
@@ -409,6 +426,130 @@ with tab_exec:
     st.plotly_chart(apply_chart_theme(fig_summary), width="stretch")
 
     st.info(output_interpretation(ind_group.set_index('CCC Output')))
+
+# =========================================================
+# TAB 2: SUB-ACTIVITY LOG
+# =========================================================
+with tab_activity_log:
+    st.subheader("Output Activity Log")
+    st.caption("Record completed work under an output and visualize the people reached by each sub-activity.")
+
+    selected_log_output = st.selectbox(
+        "Output",
+        OUTPUT_ORDER,
+        key="activity_log_output"
+    )
+    activity_records = load_activity_log()
+
+    with st.form("add_output_activity", clear_on_submit=True):
+        subactivity = st.text_input(
+            "Sub-activity",
+            placeholder="For example: Installed household taps"
+        )
+        quantity_col, unit_col = st.columns(2)
+        with quantity_col:
+            delivered_quantity = st.number_input("Quantity delivered", min_value=0, step=1)
+        with unit_col:
+            quantity_unit = st.text_input("Unit", placeholder="taps, tanks, kits")
+        people_col, notes_col = st.columns(2)
+        with people_col:
+            people_benefited = st.number_input("People benefited", min_value=0, step=1)
+        with notes_col:
+            activity_notes = st.text_input("Location or notes", placeholder="Ward, site, or brief note")
+        add_activity = st.form_submit_button("Add sub-activity")
+
+    if add_activity:
+        if not subactivity.strip():
+            st.error("Enter a sub-activity before adding it.")
+        else:
+            activity_records.append({
+                "id": uuid4().hex,
+                "Output": selected_log_output,
+                "Sub-activity": subactivity.strip(),
+                "Quantity": int(delivered_quantity),
+                "Unit": quantity_unit.strip(),
+                "People benefited": int(people_benefited),
+                "Location / notes": activity_notes.strip(),
+                "Recorded": datetime.now().strftime('%Y-%m-%d %H:%M'),
+            })
+            try:
+                save_activity_log(activity_records)
+                st.success("Sub-activity saved.")
+            except OSError as error:
+                activity_records.pop()
+                st.error(f"Could not save the activity log: {error}")
+
+    output_records = [
+        (index, record) for index, record in enumerate(activity_records)
+        if record.get("Output") == selected_log_output
+    ]
+    if output_records:
+        record_frame = pd.DataFrame([record for _, record in output_records])
+        total_people = int(pd.to_numeric(record_frame['People benefited'], errors='coerce').fillna(0).sum())
+        metric_columns = st.columns(2)
+        metric_columns[0].metric("Sub-activities recorded", len(record_frame))
+        metric_columns[1].metric("People benefited", f"{total_people:,}")
+
+        st.markdown("#### People benefited by sub-activity")
+        chart_data = (
+            record_frame.groupby('Sub-activity', as_index=False)['People benefited']
+            .sum()
+            .sort_values('People benefited', ascending=False)
+        )
+        chart_data = chart_data[chart_data['People benefited'] > 0]
+        if chart_data.empty:
+            st.info("Add a people-benefited value above zero to build the chart.")
+        else:
+            figure = px.pie(
+                chart_data,
+                values='People benefited',
+                names='Sub-activity',
+                hole=0.45,
+                title=f"Beneficiaries across {selected_log_output} sub-activities"
+            )
+            figure.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(apply_chart_theme(figure), width="stretch")
+
+        st.markdown("#### Recorded sub-activities")
+        st.dataframe(
+            record_frame[[
+                'Recorded', 'Sub-activity', 'Quantity', 'Unit',
+                'People benefited', 'Location / notes'
+            ]],
+            width="stretch",
+            hide_index=True
+        )
+
+        remove_options = [index for index, _ in output_records]
+        remove_index = st.selectbox(
+            "Select a record to remove",
+            remove_options,
+            format_func=lambda index: (
+                f"{activity_records[index]['Sub-activity']} "
+                f"({activity_records[index]['People benefited']:,} people)"
+            ),
+            key="activity_log_remove"
+        )
+        if st.button("Remove selected record", key="remove_activity_record"):
+            activity_records.pop(remove_index)
+            try:
+                save_activity_log(activity_records)
+                st.rerun()
+            except OSError as error:
+                st.error(f"Could not update the activity log: {error}")
+    else:
+        st.info("No sub-activities have been recorded for this output yet.")
+
+    output_targets = df_active[df_active['CCC Output'] == selected_log_output][[
+        'Indicator', 'Unit', 'Target', 'Weekly Target'
+    ]].rename(columns={
+        'Indicator': 'Excel indicator',
+        'Unit': 'Unit',
+        'Target': 'Daily target',
+        'Weekly Target': 'Weekly target'
+    })
+    st.markdown("#### Existing workbook targets")
+    st.dataframe(output_targets, width="stretch", hide_index=True)
 
 # =========================================================
 # TAB 2: ACTIVITY DETAILS
